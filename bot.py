@@ -4,7 +4,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 from telegram import Update
 from telegram.ext import ContextTypes
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = os.getenv.get("TELEGRAM_BOT_TOKEN")
 
 
 
