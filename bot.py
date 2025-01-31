@@ -6,8 +6,6 @@ from telegram.ext import ContextTypes
 
 TELEGRAM_BOT_TOKEN = os.getenv.get("TELEGRAM_BOT_TOKEN")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello from the new v20-style bot!")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a list of commands or usage instructions."""
@@ -18,6 +16,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ping - Check if the bot is alive"
     )
     await update.message.reply_text(help_text)
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello from the new v20-style bot!")
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Reply with 'Pong!' for connectivity testing."""
