@@ -162,14 +162,14 @@ def generate_alert_message(pair):
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
-    # ✅ No `Updater` needed
+    # ✅ **NO `Updater` ANYWHERE** ❌
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # ✅ Properly Initialize JobQueue
+    # ✅ **ENSURE `JobQueue` is setup inside `Application`**
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=900, first=10)  # 15 min interval
 
-    # ✅ Register command handlers
+    # ✅ **Register command handlers**
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
