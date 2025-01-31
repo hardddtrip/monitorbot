@@ -154,12 +154,13 @@ async def main():
         await app.stop()  # ✅ Ensure graceful shutdown
         print("✅ Bot stopped successfully.")
 
-# ✅ Correct event loop handling (NO `asyncio.run()`)
+# ✅ **Correct Event Loop Handling**
 if __name__ == "__main__":
     try:
-        loop = asyncio.get_event_loop()  # ✅ Get existing loop
-    except RuntimeError:
-        loop = asyncio.new_event_loop()  # ✅ Create new loop if none exists
+        loop = asyncio.new_event_loop()  # ✅ Always create a fresh event loop
         asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(main())  # ✅ Run bot cleanly
+        loop.run_until_complete(main())  # ✅ Run bot cleanly
+    except KeyboardInterrupt:
+        print("🛑 Bot stopped by user.")
+    finally:
+        loop.close()
