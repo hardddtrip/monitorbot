@@ -161,22 +161,24 @@ def generate_alert_message(pair):
     return None
 
 ### --- BOT MAIN FUNCTION --- ###
-def main():
-    # ✅ Fix: Use concurrent_updates(True) to prevent event loop errors
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, JobQueue
 
-    # ✅ Add command handlers
+def main():
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # ✅ Initialize JobQueue properly
+    job_queue = app.job_queue
+    job_queue.run_repeating(check_alerts, interval=900, first=10)  # 15 min interval
+
+    # ✅ Register command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("change", change_command))
     app.add_handler(CommandHandler("alert", alert_command))
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
-
-    # ✅ Properly initialize JobQueue
-    job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=900, first=10)
 
     app.run_polling()
 
