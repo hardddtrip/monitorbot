@@ -114,7 +114,20 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
-### --- Bot Initialization --- ###
+### --- CHANGE TOKEN ADDRESS --- ###
+async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow users to change the token address they want to track."""
+    user_id = update.message.chat_id
+
+    if not context.args or len(context.args[0]) < 10:  # Ensure valid input
+        await update.message.reply_text("⚠️ Usage: /change <VALID_TOKEN_ADDRESS>")
+        return
+
+    token_address = context.args[0]
+    user_addresses[user_id] = token_address
+    await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
+
+### --- BOT SETUP --- ###
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 async def main():
@@ -122,13 +135,12 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))
+    app.add_handler(CommandHandler("change", change_command))  # ✅ Now defined earlier
 
     setup_scheduler(app)  # ✅ Scheduler should be set up once
 
     await app.run_polling()  # ✅ Start the bot
 
-# ✅ Corrected event loop handling (Fix for Heroku & cloud environments)
 if __name__ == "__main__":
     try:
         loop = asyncio.get_running_loop()
