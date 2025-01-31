@@ -32,31 +32,47 @@ def escape_md(text):
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
 
-### --- SOLSCAN FETCH FUNCTION (WITH TIMEOUT) --- ###
+### --- SOLSCAN PUBLIC API FETCH --- ###
 def fetch_solscan_data(token_address):
-    """Fetch latest transactions & transfers for the token from Solscan API"""
-    url = f"https://pro-api.solscan.io/v2.0/account/transactions?account={token_address}&limit=3"
-    headers = {"accept": "application/json", "token": SOLSCAN_API_KEY}
-    
+    """Fetch token metadata and top holders from Solscan Public API."""
     try:
-        response = requests.get(url, headers=headers, timeout=10)  # ✅ Added timeout
-        
-        if response.status_code == 401:
-            print("🚨 Solscan API Unauthorized! Check API Key.")
-            return None
-        
-        response.raise_for_status()
-        data = response.json()
+        # Fetch token metadata
+        meta_url = f"https://public-api.solscan.io/token/meta/{token_address}"
+        meta_response = requests.get(meta_url)
+        meta_response.raise_for_status()
+        meta_data = meta_response.json()
 
-        if not data.get("data"):
-            return None
-        return data["data"]
-    except requests.exceptions.Timeout:
-        print("⚠️ Solscan API Timeout!")
-        return None
+        # Fetch top holders (first 5 holders)
+        holders_url = f"https://public-api.solscan.io/token/holders?tokenAddress={token_address}&limit=5"
+        holders_response = requests.get(holders_url)
+        holders_response.raise_for_status()
+        holders_data = holders_response.json()
+
+        # Extract token info
+        token_name = meta_data.get("name", "Unknown Token")
+        token_symbol = meta_data.get("symbol", "???")
+        total_supply = meta_data.get("supply", {}).get("total", "N/A")
+        
+        # Extract top holders
+        top_holders = []
+        for holder in holders_data.get("data", []):
+            address = holder["owner"]
+            balance = float(holder["amount"])
+            top_holders.append(f"🔹 {address[:6]}...{address[-4:]}: {balance:,.0f}")
+
+        return {
+            "name": token_name,
+            "symbol": token_symbol,
+            "supply": total_supply,
+            "top_holders": top_holders
+        }
+    
     except requests.exceptions.RequestException as e:
         print(f"Solscan API Error: {e}")
         return None
+
+
+
 ### --- ALERT GENERATION FUNCTION (FIXED) --- ###
 def generate_alert_message(pair, solscan_data):
     """Generate alert messages based on token metrics and Solscan data."""
@@ -71,13 +87,11 @@ def generate_alert_message(pair, solscan_data):
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
     price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
 
-    # 🔹 Extract Solscan Transaction Data
-    recent_transactions = []
-    if solscan_data:
-        for tx in solscan_data:
-            tx_type = tx.get("type", "Unknown")
-            tx_sig = tx.get("txHash", "N/A")
-            recent_transactions.append(f"🔹 {tx_type} [🔗 View](https://solscan.io/tx/{tx_sig})")
+    # 🔹 Extract Solscan Data
+    token_name = solscan_data.get("name", "Unknown Token")
+    symbol = solscan_data.get("symbol", "???")
+    total_supply = solscan_data.get("supply", "N/A")
+    top_holders = "\n".join(solscan_data.get("top_holders", ["🚫 No holders found"]))
 
     # 🔹 Alert Conditions
     alert_message = None
@@ -105,10 +119,10 @@ def generate_alert_message(pair, solscan_data):
         f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
         f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
         f"📊 *Liquidity:* ${liquidity:,.0f}\n"
-        f"📈 *24h Volume:* ${volume_24h:,.0f}\n\n"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n"
+        f"🏦 *Total Supply:* {total_supply}\n\n"
         f"⚠️ {alert_message}\n\n"
-        f"🔎 *Recent Solscan Transactions:*\n"
-        + ("\n".join(recent_transactions) if recent_transactions else "🚫 No recent transactions")
+        f"🔎 *Top Holders:*\n{top_holders}"
     )
     
     return message
@@ -150,7 +164,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
 
-    # 🔹 Fetch both DexScreener and Solscan data
+    # 🔹 Fetch DexScreener and Solscan data
     pair = fetch_token_data(token_address)
     solscan_data = fetch_solscan_data(token_address)
 
