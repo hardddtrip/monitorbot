@@ -62,30 +62,38 @@ async def detect_meme_coin_stage(application):
         print("⚠️ No data found for the token.")
         return
 
+    # Extract price & volume
     price_usd = float(pair["priceUsd"])
     volume_24h = float(pair["volume"]["h24"])
     liquidity = float(pair["liquidity"]["usd"])
+
+    # Escape MarkdownV2 special characters
+    def escape_md(text):
+        special_chars = "_*[]()~`>#+-=|{}.!\\"
+        return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
+
+    # Define detection logic (heuristics)
     alert_message = None
 
     # 🚀 Pump Detection (Rapid price increase)
     if price_usd > 1.2 * float(pair["priceChange"]["h1"]):  
-        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+        alert_message = escape_md("📈 *Pump Alert!* 🚀\nRapid price increase detected!")
 
     # 🛒 Retail Arrival (Many small trades)
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        alert_message = "🛍 *Retail Arrival Detected!*\nMany small traders are buying in."
+        alert_message = escape_md("🛍 *Retail Arrival Detected!*\nMany small traders are buying in.")
 
     # 💰 Market Maker Transfer (Large wallet outflow)
     elif liquidity > 2000000 and volume_24h > 5000000:
-        alert_message = "🔄 *Market Maker Transfer!* 📊\nLarge liquidity shift detected."
+        alert_message = escape_md("🔄 *Market Maker Transfer!* 📊\nLarge liquidity shift detected.")
 
     # 📉 Dump Detection (Massive sell-off)
     elif price_usd < 0.8 * float(pair["priceChange"]["h1"]):
-        alert_message = "⚠️ *Dump Alert!* 💥\nHeavy selling detected!"
+        alert_message = escape_md("⚠️ *Dump Alert!* 💥\nHeavy selling detected!")
 
     # 😭 Retail Capitulation (Many small sells)
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        alert_message = "💀 *Retail Capitulation!* 🏳️\nRetail investors are selling in fear."
+        alert_message = escape_md("💀 *Retail Capitulation!* 🏳️\nRetail investors are selling in fear.")
 
     # Send Alert to Telegram
     if alert_message:
@@ -126,8 +134,8 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Escape MarkdownV2 special characters
         def escape_md(text):
-            special_chars = "_*[]()~`>#+-=|{}.!\\"
-            return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
+        special_chars = "_*[]()~`>#+-=|{}.!\\"
+        return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
         message = (
             f"💰 *Token Price \\(USD\\)*: \\${escape_md(price_usd)}\n"
