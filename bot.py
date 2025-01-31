@@ -243,6 +243,7 @@ def main():
 if __name__ == "__main__":
     import asyncio
 
-    try:
-        asyncio.run(main())  # Ensures only one instance is running
-    except Run
+try:
+    asyncio.run(main())  # Run the bot safely
+except RuntimeError as e:  # ✅ Proper exception syntax
+    print(f"⚠️ RuntimeError: {e}")
