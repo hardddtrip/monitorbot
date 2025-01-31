@@ -147,26 +147,30 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
 
 import asyncio
-### --- BOT MAIN FUNCTION --- ###
-async def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+from telegram.ext import ApplicationBuilder, CommandHandler
 
+# ✅ Initialize bot globally
+app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+# ✅ Define main function
+async def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("change", change_command))
 
-    setup_scheduler(app)
+    setup_scheduler(app)  # ✅ Scheduler should be set up once
 
-    await app.run_polling()
+    await app.run_polling()  # ✅ Start the bot
 
-    if __name__ == "__main__":
+# ✅ Ensure correct event loop handling
+if __name__ == "__main__":
     try:
-        loop = asyncio.get_running_loop()  # ✅ Fetch existing event loop
+        loop = asyncio.get_running_loop()  # ✅ Get existing loop if available
     except RuntimeError:
-        loop = asyncio.new_event_loop()  # ✅ Create a new event loop if none exists
+        loop = asyncio.new_event_loop()  # ✅ Create a new loop if none exists
         asyncio.set_event_loop(loop)
 
-    loop.create_task(main())  # ✅ Run bot without blocking the event loop
-    loop.run_forever()  # ✅ Keeps the bot alive without closing the loop
+    loop.create_task(main())  # ✅ Run bot as an async task
+    loop.run_forever()  # ✅ Keep the bot running
