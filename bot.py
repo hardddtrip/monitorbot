@@ -241,4 +241,8 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+
+    try:
+        asyncio.run(main())  # Ensures only one instance is running
+    except Run
