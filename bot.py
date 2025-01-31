@@ -1,7 +1,6 @@
 import os
 import requests
 import time
-from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -27,7 +26,6 @@ def escape_md(text):
     """Escape special characters for Telegram MarkdownV2 formatting."""
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
-
 
 ### --- TELEGRAM COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,7 +135,7 @@ def generate_alert_message(pair):
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(lambda app: app.job_queue.start()).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -146,7 +144,7 @@ def main():
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
-    # ✅ Schedule job for automatic alerts every 15 minutes
+    # ✅ Initialize JobQueue properly
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=900, first=10)  # 900 seconds = 15 min
 
