@@ -2,3 +2,4 @@ python-telegram-bot==20.3
 requests
 apscheduler
 nest-asyncio
+python-telegram-bot[job-queue]
