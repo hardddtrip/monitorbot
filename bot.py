@@ -141,23 +141,18 @@ async def main():
 
     setup_scheduler(app)  # ✅ Scheduler should be set up once
 
-    await app.run_polling()  # ✅ Start the bot
+    await app.start()
+    print("⚡ Bot is running...")
+    
+    # Wait for shutdown signal
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, stop_event.set)
+    loop.add_signal_handler(signal.SIGINT, stop_event.set)
 
-async def graceful_shutdown():
-    """Gracefully shut down the bot when Heroku sends SIGTERM."""
+    await stop_event.wait()
     print("🔴 Shutting down bot gracefully...")
-    await app.shutdown()  # ✅ Ensure Telegram bot shuts down cleanly
-    sys.exit(0)  # ✅ Exit without errors
+    await app.stop()
 
 if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()  # ✅ Fix nested asyncio issues
-
-    loop = asyncio.get_event_loop()
-
-    # ✅ Handle Heroku shutdown properly
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(graceful_shutdown()))
-
-    loop.create_task(main())  # ✅ Run bot without blocking
-    loop.run_forever()  # ✅ Keeps bot alive
+    asyncio.run(main())
