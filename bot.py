@@ -83,17 +83,20 @@ def fetch_token_data(token_address):
     except Exception:
         return None
 
-### --- ALERT FUNCTION --- ###
+### --- ALERT FUNCTION (FIXED) --- ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+
+    # Fetch DexScreener and Solscan data
     pair = fetch_token_data(token_address)
+    solscan_data = fetch_solscan_data(token_address)
 
     if not pair:
         await update.message.reply_text("⚠️ No trading data found for this token.")
         return
 
-    alert_message = generate_alert_message(pair)
+    alert_message = generate_alert_message(pair, solscan_data)  # ✅ Now passing Solscan data too
     if alert_message:
         await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
     else:
