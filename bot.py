@@ -11,11 +11,15 @@ from telegram.ext import (
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+SOLSCAN_API_KEY = os.getenv("SOLSCAN_API_KEY") 
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
 # ✅ Ensure token exists
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("🚨 TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
+if not SOLSCAN_API_KEY:
+    raise ValueError("🚨 SOLSCAN_API_KEY is missing! Set it in your environment variables.")
+
 
 # ✅ Store user-tracked token addresses
 user_addresses = {}
@@ -30,22 +34,21 @@ def escape_md(text):
 
 ### --- SOLSCAN FETCH FUNCTION --- ###
 def fetch_solscan_data(token_address):
-    """Fetch transaction and holder data from Solscan API."""
-    url = f"https://pro-api.solscan.io/v1/token/holders?tokenAddress={token_address}&limit=10"
-    headers = {"accept": "application/json"}
+    """Fetch latest transactions & transfers for the token from Solscan API"""
+    url = f"https://pro-api.solscan.io/v2.0/account/transactions?account={token_address}&limit=3"
+    headers = {"accept": "application/json", "token": SOLSCAN_API_KEY}
     
     try:
         response = requests.get(url, headers=headers)
+        response.raise_for_status()
         data = response.json()
-        
-        # If there's an error, return empty data
-        if "data" not in data:
+
+        if not data.get("data"):
             return None
-        
-        return data["data"]  # Return holder data
-    except Exception as e:
-        print(f"⚠️ Solscan API Error: {e}")
-        return None  # Return None on failure
+        return data["data"]
+    except requests.exceptions.RequestException as e:
+        print(f"Solscan API Error: {e}")
+        return None
 
 
 
@@ -88,7 +91,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
 
-    # Fetch DexScreener and Solscan data
+    # 🔹 Fetch both DexScreener and Solscan data
     pair = fetch_token_data(token_address)
     solscan_data = fetch_solscan_data(token_address)
 
@@ -96,7 +99,8 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No trading data found for this token.")
         return
 
-    alert_message = generate_alert_message(pair, solscan_data)  # ✅ Now passing Solscan data too
+    # 🔹 Generate the alert message
+    alert_message = generate_alert_message(pair, solscan_data)
     if alert_message:
         await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
     else:
@@ -170,24 +174,27 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
 ### --- ALERT GENERATION FUNCTION --- ###
 def generate_alert_message(pair, solscan_data):
-    """Generate alert messages based on token metrics including Solscan data."""
-
-    # 🔹 Extract token details
+    """Generate alert messages based on token metrics and Solscan data."""
+    
+    # 🔹 Extract DexScreener Data
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
     price_usd = float(pair["priceUsd"])
     liquidity = float(pair["liquidity"]["usd"])
     volume_24h = float(pair["volume"]["h24"])
-
-    # 🔹 Price change over different time periods
     price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
     price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
 
-    # 🔹 Solscan holder data (get number of holders from API)
-    holder_count = len(solscan_data) if solscan_data else "N/A"
+    # 🔹 Extract Solscan Transaction Data
+    recent_transactions = []
+    if solscan_data:
+        for tx in solscan_data:
+            tx_type = tx.get("type", "Unknown")
+            tx_sig = tx.get("txHash", "N/A")
+            recent_transactions.append(f"🔹 {tx_type} [🔗 View](https://solscan.io/tx/{tx_sig})")
 
-    # 🔹 Generate alert messages
+    # 🔹 Alert Conditions
     alert_message = None
     if price_usd > 1.2 * price_change_1h:
         alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
@@ -213,9 +220,10 @@ def generate_alert_message(pair, solscan_data):
         f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
         f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
         f"📊 *Liquidity:* ${liquidity:,.0f}\n"
-        f"📈 *24h Volume:* ${volume_24h:,.0f}\n"
-        f"👥 *Total Holders:* {holder_count}\n\n"
-        f"⚠️ {alert_message}"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n\n"
+        f"⚠️ {alert_message}\n\n"
+        f"🔎 *Recent Solscan Transactions:*\n"
+        + ("\n".join(recent_transactions) if recent_transactions else "🚫 No recent transactions")
     )
     
     return message
@@ -227,7 +235,7 @@ def main():
 
     # ✅ **ENSURE `JobQueue` is setup inside `Application`**
     job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 15 min interval
+    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 2 min interval
 
     # ✅ **Register command handlers**
     app.add_handler(CommandHandler("start", start_command))
