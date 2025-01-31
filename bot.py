@@ -162,6 +162,6 @@ async def main():
 
 # ✅ FIX: Proper event loop handling for Heroku
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())  # Non-blocking
+    loop.run_forever()  # Keeps the bot running in Heroku
