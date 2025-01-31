@@ -142,10 +142,9 @@ async def main():
     await app.run_polling()  # ✅ Start the bot
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(main())
+    import nest_asyncio
+    nest_asyncio.apply()  # ✅ Allows multiple async loops (fixes Heroku issue)
+    
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())  # ✅ Start bot without blocking
+    loop.run_forever()  # ✅ Keeps the bot running
