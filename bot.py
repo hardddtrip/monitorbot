@@ -29,27 +29,53 @@ import requests
 
 DEXSCREENER_URL = "https://api.dexscreener.com/latest/dex/tokens/h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
+import requests
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+# DexScreener API URL for the token
+DEXSCREENER_URL = "https://api.dexscreener.com/latest/dex/tokens/h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
+
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        # Fetch data from DexScreener API
         response = requests.get(DEXSCREENER_URL)
         data = response.json()
-        price = data["pairs"][0]["priceUsd"]
-        volume_24h = data["pairs"][0]["volume"]["h24"]
 
-        message = f"💰 Price: ${price}\n📈 24h Volume: ${volume_24h}"
-        await update.message.reply_text(message)
+        # Extract relevant information from the first pair
+        pair = data["pairs"][0]
+        price_usd = pair["priceUsd"]
+        volume_24h = pair["volume"]["h24"]
+        liquidity = pair["liquidity"]["usd"]
+        market_cap = pair["marketCap"]  # Market Cap (MC)
+        dex_url = pair["url"]
+
+        # Format the response message
+        message = (
+            f"💰 *Token Price (USD)*: ${price_usd}\n"
+            f"📊 *24h Volume*: ${volume_24h:,.2f}\n"
+            f"💧 *Liquidity*: ${liquidity:,.2f}\n"
+            f"🏦 *Market Cap (MC)*: ${market_cap:,.2f}\n"
+            f"🔗 [View on DexScreener]({dex_url})"
+        )
+
+        # Send the formatted response to the user
+        await update.message.reply_text(message, parse_mode="Markdown")
+
     except Exception as e:
-        await update.message.reply_text("Error fetching price data.")
-        
+        # Handle errors gracefully
+        await update.message.reply_text(f"⚠️ Error fetching price data: {e}")
 
 
 
 def main():
+    # Initialize the bot
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))  # or your existing start_command
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("price", price_command))
 
     app.run_polling()
 
