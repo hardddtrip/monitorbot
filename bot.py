@@ -7,8 +7,12 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    JobQueue
+    JobQueue,
+app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).read_timeout(15).connect_timeout(10).build()
 )
+
+
+
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -36,6 +40,17 @@ def escape_md(text):
 def fetch_solscan_data(token_address):
     """Fetch token metadata and top holders from Solscan Public API."""
     try:
+            response = requests.get(url, timeout=5)  # Set a timeout
+        response.raise_for_status()  # Raise error for HTTP failures
+        data = response.json()
+        return data if "data" in data else None
+    except requests.exceptions.Timeout:
+        print("⚠️ Solscan API Timeout! Retrying...")
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ Solscan API Error: {e}")
+    return None  # Return None on failure
+
+
         # Fetch token metadata
         meta_url = f"https://public-api.solscan.io/token/meta/{token_address}"
         meta_response = requests.get(meta_url)
@@ -76,7 +91,7 @@ def fetch_solscan_data(token_address):
 ### --- ALERT GENERATION FUNCTION (FIXED) --- ###
 def generate_alert_message(pair, solscan_data):
     """Generate alert messages based on token metrics and Solscan data."""
-    
+
     # 🔹 Extract DexScreener Data
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
@@ -87,11 +102,11 @@ def generate_alert_message(pair, solscan_data):
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
     price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
 
-    # 🔹 Extract Solscan Data
-    token_name = solscan_data.get("name", "Unknown Token")
-    symbol = solscan_data.get("symbol", "???")
-    total_supply = solscan_data.get("supply", "N/A")
-    top_holders = "\n".join(solscan_data.get("top_holders", ["🚫 No holders found"]))
+    # 🔹 Extract Solscan Data (if available)
+    if solscan_data:
+        holder_count = solscan_data.get("data", {}).get("holderCount", "N/A")
+    else:
+        holder_count = "Unknown (Solscan API Failed)"
 
     # 🔹 Alert Conditions
     alert_message = None
