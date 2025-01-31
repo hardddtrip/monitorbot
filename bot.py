@@ -27,27 +27,50 @@ def escape_md(text):
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
-### --- TELEGRAM COMMANDS --- ###
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! I will notify you about token activity.")
+### --- Fetch Solscan Whale Transactions --- ###
+def fetch_whale_transactions(token_address):
+    """Fetch the largest recent transactions for the token using Solscan API."""
+    url = f"https://public-api.solscan.io/token/txs?tokenAddress={token_address}&limit=10"
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if "data" not in data:
+            return None
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = escape_md(
-        "📌 *Available Commands:*\n"
-        "/start - Greet the user\n"
-        "/help - Show this help message\n"
-        "/ping - Check if the bot is alive\n"
-        "/price - Get token price\n"
-        "/alert - Check for alerts manually\n"
-        "/subscribe_alerts - Enable auto alerts for 24h\n"
-        "/unsubscribe_alerts - Disable auto alerts"
-    )
-    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+        # ✅ Extract large transactions (greater than $50,000 in SOL)
+        large_txns = [
+            txn for txn in data["data"]
+            if txn.get("lamport", 0) > 50_000 * 1_000_000_000  # Convert SOL to lamports
+        ]
 
-async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Pong!")
+        return large_txns
 
-### --- PRICE FETCHING --- ###
+    except Exception as e:
+        print(f"❌ Error fetching whale transactions: {e}")
+        return None
+
+### --- Fetch Solscan Wallet Activity --- ###
+def fetch_wallet_activity(token_address):
+    """Fetch recent wallet activity for the token using Solscan API."""
+    url = f"https://public-api.solscan.io/token/holders?tokenAddress={token_address}&limit=10"
+    
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if "data" not in data:
+            return None
+
+        # ✅ Extract top wallets (who are the biggest buyers/sellers?)
+        top_wallets = data["data"][:5]  # Top 5 wallets
+
+        return top_wallets
+
+    except Exception as e:
+        print(f"❌ Error fetching wallet activity: {e}")
+        return None
+
+### --- Fetch Token Data --- ###
 def fetch_token_data(token_address):
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     try:
@@ -59,102 +82,31 @@ def fetch_token_data(token_address):
     except Exception:
         return None
 
-### --- ALERT FUNCTION --- ###
-async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-    pair = fetch_token_data(token_address)
-
-    if not pair:
-        await update.message.reply_text("⚠️ No trading data found for this token.")
-        return
-
-    alert_message = generate_alert_message(pair)
-    if alert_message:
-        await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
-    else:
-        await update.message.reply_text("🔍 No significant alerts detected.")
-
-### --- PRICE COMMAND --- ###
-async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-    pair = fetch_token_data(token_address)
-
-    if not pair:
-        await update.message.reply_text("⚠️ No trading data found for this token.")
-        return
-
-    price_usd = pair["priceUsd"]
-    volume_24h = pair["volume"]["h24"]
-    liquidity = pair["liquidity"]["usd"]
-    market_cap = pair.get("marketCap", "N/A")
-    dex_url = pair["url"]
-
-    message = escape_md(
-        f"💰 *Token Price (USD)*: ${price_usd}\n"
-        f"📊 *24h Volume*: ${volume_24h:,}\n"
-        f"💧 *Liquidity*: ${liquidity:,}\n"
-        f"🏦 *Market Cap (MC)*: ${market_cap:,}\n"
-        f"🔗 [View on DexScreener]({dex_url})"
-    )
-
-    await update.message.reply_text(message, parse_mode="MarkdownV2")
-
-### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
-async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    expiry_time = time.time() + 86400  # 24 hours from now
-    subscribed_users[user_id] = expiry_time
-    await update.message.reply_text("✅ You have subscribed to alerts for 24 hours!")
-
-async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    if user_id in subscribed_users:
-        del subscribed_users[user_id]
-        await update.message.reply_text("❌ You have unsubscribed from alerts.")
-    else:
-        await update.message.reply_text("⚠️ You are not subscribed to alerts.")
-
-### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
-async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Check alerts every 15 minutes for subscribed users."""
-    current_time = time.time()
-    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
-
-    # Remove expired subscriptions
-    for user_id in expired_users:
-        del subscribed_users[user_id]
-
-    # Process active subscriptions
-    for user_id in subscribed_users.keys():
-        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-        pair = fetch_token_data(token_address)
-
-        if pair:
-            alert_message = generate_alert_message(pair)
-            if alert_message:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=escape_md(alert_message),
-                    parse_mode="MarkdownV2"
-                )
-
-### --- ALERT GENERATION FUNCTION --- ###
-def generate_alert_message(pair):
-    """Generate alert messages based on token metrics."""
+### --- Generate Alert Message --- ###
+def generate_alert_message(pair, token_address):
+    """Generate alert messages based on token metrics & on-chain data."""
     
-    # 🔹 Extract data from API response
+    # 🔹 Extract DEX price data
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
     price_usd = float(pair["priceUsd"])
     liquidity = float(pair["liquidity"]["usd"])
     volume_24h = float(pair["volume"]["h24"])
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
 
-    # 🔹 Extract price changes over different timeframes
-    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))  # 5 min
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))  # 1 hour
-    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))  # 24 hours
+    # 🔹 Fetch Whale Transactions 🐋
+    whales = fetch_whale_transactions(token_address)
+    whale_alert = "🐋 *No whale transactions detected.*"
+    if whales:
+        whale_alert = f"🐋 *{len(whales)} large whale transactions detected!*"
+    
+    # 🔹 Fetch Wallet Activity 📊
+    wallets = fetch_wallet_activity(token_address)
+    wallet_alert = "📊 *No significant wallet changes.*"
+    if wallets:
+        wallet_alert = f"👛 *New wallet activity detected!*"
 
     # 🔹 Alert conditions
     alert_message = None
@@ -169,7 +121,6 @@ def generate_alert_message(pair):
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
         alert_message = "💀 *Retail Capitulation!* 🏳️"
 
-    # 🔹 If no alert, return None
     if not alert_message:
         return None
 
@@ -183,29 +134,58 @@ def generate_alert_message(pair):
         f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
         f"📊 *Liquidity:* ${liquidity:,.0f}\n"
         f"📈 *24h Volume:* ${volume_24h:,.0f}\n\n"
+        f"{whale_alert}\n"
+        f"{wallet_alert}\n\n"
         f"⚠️ {alert_message}"
     )
-    
+
     return message
 
-### --- BOT MAIN FUNCTION --- ###
+### --- Alert Command --- ###
+async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    pair = fetch_token_data(token_address)
+
+    if not pair:
+        await update.message.reply_text("⚠️ No trading data found for this token.")
+        return
+
+    alert_message = generate_alert_message(pair, token_address)
+    if alert_message:
+        await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
+    else:
+        await update.message.reply_text("🔍 No significant alerts detected.")
+
+### --- Automatic Alerts --- ###
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Check alerts every 5 minutes for subscribed users."""
+    current_time = time.time()
+    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
+
+    for user_id in expired_users:
+        del subscribed_users[user_id]
+
+    for user_id in subscribed_users.keys():
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        pair = fetch_token_data(token_address)
+
+        if pair:
+            alert_message = generate_alert_message(pair, token_address)
+            if alert_message:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=escape_md(alert_message),
+                    parse_mode="MarkdownV2"
+                )
+
+### --- Start Bot --- ###
 def main():
-    # ✅ **NO `Updater` ANYWHERE** ❌
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # ✅ **ENSURE `JobQueue` is setup inside `Application`**
     job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 15 min interval
+    job_queue.run_repeating(check_alerts, interval=300, first=10)  # 5 min interval
 
-    # ✅ **Register command handlers**
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping_command))
-    app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
-    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
-    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
-
     app.run_polling()
 
 if __name__ == "__main__":
