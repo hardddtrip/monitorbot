@@ -146,6 +146,7 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_addresses[user_id] = token_address
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
 
+import asyncio
 ### --- BOT MAIN FUNCTION --- ###
 async def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
@@ -160,14 +161,7 @@ async def main():
 
     await app.run_polling()
 
-# ✅ FIX: Proper event loop handling for Heroku
-import asyncio
-
-async def main():
-    # Your bot logic here
-    await app.run_polling()
-
-if __name__ == "__main__":
+    if __name__ == "__main__":
     try:
         loop = asyncio.get_running_loop()  # ✅ Fetch existing event loop
     except RuntimeError:
