@@ -39,6 +39,11 @@ def fetch_solscan_data(token_address):
     
     try:
         response = requests.get(url, headers=headers)
+        
+        if response.status_code == 401:
+            print("🚨 Solscan API Unauthorized! Check API Key.")
+            return None
+        
         response.raise_for_status()
         data = response.json()
 
@@ -48,6 +53,61 @@ def fetch_solscan_data(token_address):
     except requests.exceptions.RequestException as e:
         print(f"Solscan API Error: {e}")
         return None
+### --- ALERT GENERATION FUNCTION (FIXED) --- ###
+def generate_alert_message(pair, solscan_data):
+    """Generate alert messages based on token metrics and Solscan data."""
+    
+    # 🔹 Extract DexScreener Data
+    token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
+    symbol = pair.get("baseToken", {}).get("symbol", "???")
+    price_usd = float(pair["priceUsd"])
+    liquidity = float(pair["liquidity"]["usd"])
+    volume_24h = float(pair["volume"]["h24"])
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
+
+    # 🔹 Extract Solscan Transaction Data
+    recent_transactions = []
+    if solscan_data:
+        for tx in solscan_data:
+            tx_type = tx.get("type", "Unknown")
+            tx_sig = tx.get("txHash", "N/A")
+            recent_transactions.append(f"🔹 {tx_type} [🔗 View](https://solscan.io/tx/{tx_sig})")
+
+# 🔹 Alert Conditions
+    alert_message = None
+    if price_usd > 1.2 * price_change_1h:
+        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        alert_message = "🛍 *Retail Arrival Detected!*"
+    elif liquidity > 2000000 and volume_24h > 5000000:
+        alert_message = "🔄 *Market Maker Transfer!* 📊"
+    elif price_usd < 0.8 * price_change_1h:
+        alert_message = "⚠️ *Dump Alert!* 💥"
+    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        alert_message = "💀 *Retail Capitulation!* 🏳️"
+
+  # 🔹 If no alert, return None
+    if not alert_message:
+        return None
+
+  # 🔹 Create enhanced alert message
+    message = escape_md(
+        f"🚨 *{token_name} ({symbol}) ALERT!* 🚨\n\n"
+        f"💰 *Current Price:* ${price_usd:.4f}\n"
+        f"📉 *Price Change:*\n"
+        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
+        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
+        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
+        f"📊 *Liquidity:* ${liquidity:,.0f}\n"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n\n"
+        f"⚠️ {alert_message}\n\n"
+        f"🔎 *Recent Solscan Transactions:*\n"
+        + ("\n".join(recent_transactions) if recent_transactions else "🚫 No recent transactions")
+    )
+    
+    return message
 
 ### --- TELEGRAM COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
