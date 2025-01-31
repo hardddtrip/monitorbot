@@ -1,15 +1,11 @@
 import os
 import requests
 import asyncio
-import signal
-import sys
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
 # ✅ Ensure token exists
@@ -27,7 +23,7 @@ def escape_md(text):
 
 ### --- CORE COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello from the new v20-style bot!")
+    await update.message.reply_text("Hello! Use /alert to check for token alerts.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
@@ -35,17 +31,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Greet the user\n"
         "/help - Show this help message\n"
         "/ping - Check if the bot is alive\n"
-        "/price - Get token price\n"
-        "/change <TOKEN_ADDRESS> - Change token address\n"
-        "🔍 Auto alerts every 15 min"
+        "/alert - Get real-time token alerts"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pong!")
 
-### --- PRICE FETCHING --- ###
+### --- PRICE FETCHING & ALERT SYSTEM --- ###
 async def fetch_token_data(token_address):
+    """Fetch token data from DexScreener API."""
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     try:
         response = requests.get(url)
@@ -56,42 +51,8 @@ async def fetch_token_data(token_address):
     except Exception:
         return None
 
-async def detect_meme_coin_stage(application):
-    token_address = DEFAULT_TOKEN_ADDRESS
-    pair = await fetch_token_data(token_address)
-    if not pair:
-        print("⚠️ No data found for the token.")
-        return
-
-    price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
-    liquidity = float(pair["liquidity"]["usd"])
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-
-    alert_message = None
-    if price_usd > 1.2 * price_change_1h:
-        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        alert_message = "🛍 *Retail Arrival Detected!*"
-    elif liquidity > 2000000 and volume_24h > 5000000:
-        alert_message = "🔄 *Market Maker Transfer!* 📊"
-    elif price_usd < 0.8 * price_change_1h:
-        alert_message = "⚠️ *Dump Alert!* 💥"
-    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        alert_message = "💀 *Retail Capitulation!* 🏳️"
-
-    if alert_message and TELEGRAM_CHAT_ID:
-        bot = application.bot
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=escape_md(alert_message), parse_mode="MarkdownV2")
-
-### --- Scheduler Setup --- ###
-def setup_scheduler(application):
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=2, args=[application])
-    scheduler.start()
-
-### --- COMMANDS --- ###
-async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fetch real-time alerts when the user runs /alert"""
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
     pair = await fetch_token_data(token_address)
@@ -100,80 +61,44 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No trading data found for this token.")
         return
 
-    price_usd = pair["priceUsd"]
-    volume_24h = pair["volume"]["h24"]
-    liquidity = pair["liquidity"]["usd"]
-    market_cap = pair.get("marketCap", "N/A")
-    dex_url = pair["url"]
+    price_usd = float(pair["priceUsd"])
+    volume_24h = float(pair["volume"]["h24"])
+    liquidity = float(pair["liquidity"]["usd"])
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
-    message = escape_md(
-        f"💰 *Token Price (USD)*: ${price_usd}\n"
-        f"📊 *24h Volume*: ${volume_24h:,}\n"
-        f"💧 *Liquidity*: ${liquidity:,}\n"
-        f"🏦 *Market Cap (MC)*: ${market_cap:,}\n"
-        f"🔗 [View on DexScreener]({dex_url})"
-    )
+    alert_message = "📢 *Current Token Status:*\n"
+    
+    if price_usd > 1.2 * price_change_1h:
+        alert_message += "🚀 *Pump Alert!* Rapid price increase detected!\n"
+    if pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        alert_message += "🛍 *Retail Arrival Detected!*\n"
+    if liquidity > 2000000 and volume_24h > 5000000:
+        alert_message += "🔄 *Market Maker Transfer!* 📊\n"
+    if price_usd < 0.8 * price_change_1h:
+        alert_message += "💥 *Dump Alert!* Price drop detected!\n"
+    if pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        alert_message += "💀 *Retail Capitulation!* 🏳️\n"
 
-    await update.message.reply_text(message, parse_mode="MarkdownV2")
+    if alert_message == "📢 *Current Token Status:*\n":
+        alert_message += "✅ No significant market events detected."
 
-### --- CHANGE TOKEN ADDRESS --- ###
-async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Allow users to change the token address they want to track."""
-    user_id = update.message.chat_id
-
-    if not context.args or len(context.args[0]) < 10:  # Ensure valid input
-        await update.message.reply_text("⚠️ Usage: /change <VALID_TOKEN_ADDRESS>")
-        return
-
-    token_address = context.args[0]
-    user_addresses[user_id] = token_address
-    await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
+    await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
 
 ### --- BOT SETUP --- ###
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-import asyncio
-import signal
-
 async def main():
-    """Start the bot and handle shutdown properly."""
-    await app.initialize()  # ✅ Initialize Telegram bot
+    """Start the bot and register command handlers."""
+    await app.initialize()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))
-
-    setup_scheduler(app)  # ✅ Set up scheduled tasks
+    app.add_handler(CommandHandler("alert", alert_command))  # ✅ New command
 
     print("⚡ Bot is running...")
+    await app.run_polling()
 
-    # ✅ Use an Event for graceful shutdown
-    stop_event = asyncio.Event()
-
-    def stop_bot(*args):
-        """Signal handler to stop the bot."""
-        print("🛑 Received stop signal. Cleaning up...")
-        stop_event.set()  # ✅ Trigger event to stop
-
-    # ✅ Attach signal handlers
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGTERM, stop_bot)
-    loop.add_signal_handler(signal.SIGINT, stop_bot)
-
-    await app.start()  # ✅ Start bot
-    await app.run_polling()  # ✅ Keep running until stopped
-
-    await stop_event.wait()  # ✅ Wait for stop signal
-    print("🔴 Shutting down bot gracefully...")
-
-    await app.stop()  # ✅ Stop Telegram bot cleanly
-    print("✅ Bot stopped successfully.")
-
-# ✅ Ensure clean execution with event loop handling
+# ✅ Start the bot
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())  # ✅ No nested event loops
-    except (KeyboardInterrupt, SystemExit):
-        print("🛑 Bot manually stopped.")
+    asyncio.run(main())
