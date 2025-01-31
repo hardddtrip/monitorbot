@@ -27,27 +27,7 @@ def escape_md(text):
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
-### --- TELEGRAM COMMANDS --- ###
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! I will notify you about token activity.")
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = escape_md(
-        "📌 *Available Commands:*\n"
-        "/start - Greet the user\n"
-        "/help - Show this help message\n"
-        "/ping - Check if the bot is alive\n"
-        "/price - Get token price\n"
-        "/alert - Check for alerts manually\n"
-        "/subscribe_alerts - Enable auto alerts for 24h\n"
-        "/unsubscribe_alerts - Disable auto alerts"
-    )
-    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
-
-async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Pong!")
-
-### --- PRICE FETCHING (DexScreener) --- ###
+### --- FETCH PRICE DATA FROM DEXSCREENER --- ###
 def fetch_token_data(token_address):
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     try:
@@ -59,7 +39,7 @@ def fetch_token_data(token_address):
     except Exception:
         return None
 
-### --- SOLSCAN API INTEGRATION --- ###
+### --- FETCH ON-CHAIN DATA FROM SOLSCAN --- ###
 def fetch_solscan_data(token_address):
     url = f"https://pro-api.solscan.io/v1/token/{token_address}"
     headers = {"accept": "application/json"}
@@ -70,40 +50,7 @@ def fetch_solscan_data(token_address):
     except Exception:
         return {}
 
-### --- ALERT FUNCTION --- ###
-async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-    
-    pair = fetch_token_data(token_address)
-    solscan_data = fetch_solscan_data(token_address)
-
-    if not pair:
-        await update.message.reply_text("⚠️ No trading data found for this token.")
-        return
-
-    alert_message = generate_alert_message(pair, solscan_data)
-    if alert_message:
-        await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
-    else:
-        await update.message.reply_text("🔍 No significant alerts detected.")
-
-### --- PRICE COMMAND --- ###
-async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-
-    pair = fetch_token_data(token_address)
-    solscan_data = fetch_solscan_data(token_address)
-
-    if not pair:
-        await update.message.reply_text("⚠️ No trading data found for this token.")
-        return
-
-    message = generate_price_message(pair, solscan_data)
-    await update.message.reply_text(message, parse_mode="MarkdownV2")
-
-### --- PRICE MESSAGE GENERATOR --- ###
+### --- GENERATE PRICE MESSAGE --- ###
 def generate_price_message(pair, solscan_data):
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
@@ -124,7 +71,7 @@ def generate_price_message(pair, solscan_data):
         f"🔗 [View on DexScreener]({dex_url})"
     )
 
-### --- ALERT GENERATION FUNCTION --- ###
+### --- GENERATE ALERT MESSAGE --- ###
 def generate_alert_message(pair, solscan_data):
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
@@ -164,7 +111,7 @@ def generate_alert_message(pair, solscan_data):
         f"⚠️ {alert_message}"
     )
 
-### --- AUTOMATIC ALERT FUNCTION --- ###
+### --- CHECK ALERTS EVERY 2 MINUTES --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Check alerts every 2 minutes for subscribed users."""
     for user_id in subscribed_users.keys():
@@ -177,11 +124,49 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
             if alert_message:
                 await context.bot.send_message(chat_id=user_id, text=escape_md(alert_message), parse_mode="MarkdownV2")
 
-### --- BOT MAIN FUNCTION --- ###
+### --- TELEGRAM COMMAND HANDLERS --- ###
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! I will notify you about token activity.")
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = escape_md(
+        "📌 *Available Commands:*\n"
+        "/start - Greet the user\n"
+        "/help - Show this help message\n"
+        "/ping - Check if the bot is alive\n"
+        "/price - Get token price\n"
+        "/alert - Check for alerts manually\n"
+        "/subscribe_alerts - Enable auto alerts for 24h\n"
+        "/unsubscribe_alerts - Disable auto alerts"
+    )
+    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Pong!")
+
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    pair = fetch_token_data(token_address)
+    solscan_data = fetch_solscan_data(token_address)
+
+    if not pair:
+        await update.message.reply_text("⚠️ No trading data found for this token.")
+        return
+
+    message = generate_price_message(pair, solscan_data)
+    await update.message.reply_text(message, parse_mode="MarkdownV2")
+
+### --- MAIN FUNCTION --- ###
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=120, first=10)  # 2 min interval
+
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("price", price_command))
 
     app.run_polling()
 
