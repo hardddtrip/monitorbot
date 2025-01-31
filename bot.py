@@ -36,6 +36,7 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ### --- PRICE FETCHING --- ###
 
+
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch and display token price for the user's selected address."""
     user_id = update.message.chat_id
@@ -60,19 +61,24 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         market_cap = pair.get("marketCap", "N/A")  # Handle missing market cap
         dex_url = pair["url"]
 
-        # Format response
+        # Escape special characters in Markdown
+        def escape_md(text):
+            special_chars = "_*[]()~`>#+-=|{}.!"
+            return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
+
         message = (
-            f"💰 *Token Price (USD)*: ${price_usd}\n"
-            f"📊 *24h Volume*: ${volume_24h:,.2f}\n"
-            f"💧 *Liquidity*: ${liquidity:,.2f}\n"
-            f"🏦 *Market Cap (MC)*: ${market_cap:,.2f}\n"
+            f"💰 *Token Price (USD)*: ${escape_md(price_usd)}\n"
+            f"📊 *24h Volume*: ${escape_md(volume_24h):,}\n"
+            f"💧 *Liquidity*: ${escape_md(liquidity):,}\n"
+            f"🏦 *Market Cap (MC)*: ${escape_md(market_cap):,}\n"
             f"🔗 [View on DexScreener]({dex_url})"
         )
 
-        await update.message.reply_text(message, parse_mode="Markdown")
+        await update.message.reply_text(message, parse_mode="MarkdownV2")
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error fetching price data: {e}")
+
 
 ### --- CHANGE TOKEN ADDRESS --- ###
 
