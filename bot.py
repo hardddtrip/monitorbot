@@ -7,9 +7,11 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    JobQueue,
-app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).read_timeout(15).connect_timeout(10).build()
+    JobQueue
 )
+
+# ✅ Correct ApplicationBuilder usage
+app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 
 
