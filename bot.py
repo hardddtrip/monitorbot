@@ -1,10 +1,14 @@
 import os
 import requests
 import time
-import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    JobQueue
+)
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -35,8 +39,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Greet the user\n"
         "/help - Show this help message\n"
         "/ping - Check if the bot is alive\n"
-        "/price - Get token price\n"
-        "/change <TOKEN_ADDRESS> - Change token address\n"
         "/alert - Check for alerts manually\n"
         "/subscribe_alerts - Enable auto alerts for 24h\n"
         "/unsubscribe_alerts - Disable auto alerts"
@@ -89,32 +91,29 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
     else:
         await update.message.reply_text("⚠️ You are not subscribed to alerts.")
 
-### --- AUTOMATIC ALERT FUNCTION --- ###
-async def check_alerts(application):
+### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Check alerts every 15 minutes for subscribed users."""
-    while True:
-        current_time = time.time()
-        expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
+    current_time = time.time()
+    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
 
-        # Remove expired subscriptions
-        for user_id in expired_users:
-            del subscribed_users[user_id]
+    # Remove expired subscriptions
+    for user_id in expired_users:
+        del subscribed_users[user_id]
 
-        # Process active subscriptions
-        for user_id in subscribed_users.keys():
-            token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-            pair = fetch_token_data(token_address)
+    # Process active subscriptions
+    for user_id in subscribed_users.keys():
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        pair = fetch_token_data(token_address)
 
-            if pair:
-                alert_message = generate_alert_message(pair)
-                if alert_message:
-                    await application.bot.send_message(
-                        chat_id=user_id,
-                        text=escape_md(alert_message),
-                        parse_mode="MarkdownV2"
-                    )
-
-        await asyncio.sleep(900)  # Sleep for 15 minutes
+        if pair:
+            alert_message = generate_alert_message(pair)
+            if alert_message:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=escape_md(alert_message),
+                    parse_mode="MarkdownV2"
+                )
 
 ### --- ALERT GENERATION FUNCTION --- ###
 def generate_alert_message(pair):
@@ -137,8 +136,7 @@ def generate_alert_message(pair):
     return None
 
 ### --- BOT MAIN FUNCTION --- ###
-async def main():
-    global app
+def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -148,10 +146,11 @@ async def main():
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
-    # Start background alert monitoring
-    asyncio.create_task(check_alerts(app))
+    # ✅ Schedule job for automatic alerts every 15 minutes
+    job_queue = app.job_queue
+    job_queue.run_repeating(check_alerts, interval=900, first=10)  # 900 seconds = 15 min
 
-    app.run_polling()
+    app.run_polling()  # ✅ No asyncio.run(), no event loop conflicts
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()  # ✅ No asyncio.run(), no event loop issues
