@@ -13,7 +13,6 @@ app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).read_timeout(15).connect_ti
 
 
 
-
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 SOLSCAN_API_KEY = os.getenv("SOLSCAN_API_KEY") 
