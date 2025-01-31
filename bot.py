@@ -151,7 +151,7 @@ def generate_alert_message(pair, transactions):
     
     return message
 
-### --- Telegram Alert Command --- ###
+### --- Telegram Command Alert --- ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
@@ -171,13 +171,19 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("🔍 No significant alerts detected.")
 
+### --- Automatic Alert Function (JobQueue) --- ###
+async def automatic_alert(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 2 minutes to send alerts automatically."""
+    for user_id in subscribed_users.keys():
+        await alert_command(context.bot, context)
+
 ### --- Bot Main Function --- ###
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
     job_queue = app.job_queue
-    job_queue.run_repeating(alert_command, interval=120, first=10)  # 2 min interval
-    
+    job_queue.run_repeating(automatic_alert, interval=120, first=10)  # ✅ Fixed JobQueue Alert
+
     app.add_handler(CommandHandler("alert", alert_command))
     
     app.run_polling()
