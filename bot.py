@@ -143,22 +143,50 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### --- ALERT GENERATION FUNCTION --- ###
 def generate_alert_message(pair):
     """Generate alert messages based on token metrics."""
+    
+    # 🔹 Extract data from API response
+    token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
+    symbol = pair.get("baseToken", {}).get("symbol", "???")
     price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
     liquidity = float(pair["liquidity"]["usd"])
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    volume_24h = float(pair["volume"]["h24"])
 
+    # 🔹 Extract price changes over different timeframes
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))  # 5 min
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))  # 1 hour
+    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))  # 24 hours
+
+    # 🔹 Alert conditions
+    alert_message = None
     if price_usd > 1.2 * price_change_1h:
-        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        return "🛍 *Retail Arrival Detected!*"
+        alert_message = "🛍 *Retail Arrival Detected!*"
     elif liquidity > 2000000 and volume_24h > 5000000:
-        return "🔄 *Market Maker Transfer!* 📊"
+        alert_message = "🔄 *Market Maker Transfer!* 📊"
     elif price_usd < 0.8 * price_change_1h:
-        return "⚠️ *Dump Alert!* 💥"
+        alert_message = "⚠️ *Dump Alert!* 💥"
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        return "💀 *Retail Capitulation!* 🏳️"
-    return None
+        alert_message = "💀 *Retail Capitulation!* 🏳️"
+
+    # 🔹 If no alert, return None
+    if not alert_message:
+        return None
+
+    # 🔹 Create enhanced alert message
+    message = escape_md(
+        f"🚨 *{token_name} ({symbol}) ALERT!* 🚨\n\n"
+        f"💰 *Current Price:* ${price_usd:.4f}\n"
+        f"📉 *Price Change:*\n"
+        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
+        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
+        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
+        f"📊 *Liquidity:* ${liquidity:,.0f}\n"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n\n"
+        f"⚠️ {alert_message}"
+    )
+    
+    return message
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
