@@ -164,18 +164,24 @@ def generate_alert_message(pair, solscan_data):
         f"⚠️ {alert_message}"
     )
 
+### --- AUTOMATIC ALERT FUNCTION --- ###
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Check alerts every 2 minutes for subscribed users."""
+    for user_id in subscribed_users.keys():
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        pair = fetch_token_data(token_address)
+        solscan_data = fetch_solscan_data(token_address)
+
+        if pair:
+            alert_message = generate_alert_message(pair, solscan_data)
+            if alert_message:
+                await context.bot.send_message(chat_id=user_id, text=escape_md(alert_message), parse_mode="MarkdownV2")
+
 ### --- BOT MAIN FUNCTION --- ###
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=120, first=10)  # 2 min interval
-
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("alert", alert_command))
 
     app.run_polling()
 
