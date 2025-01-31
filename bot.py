@@ -249,7 +249,7 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
+    main() 
 
 try:
     asyncio.run(main())  # Run the bot safely
