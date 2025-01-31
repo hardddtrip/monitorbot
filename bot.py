@@ -161,12 +161,10 @@ def generate_alert_message(pair):
     return None
 
 ### --- BOT MAIN FUNCTION --- ###
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, JobQueue
-
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    # ✅ Initialize JobQueue properly
+    # ✅ Fix JobQueue initialization
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=900, first=10)  # 15 min interval
 
@@ -175,7 +173,6 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))
     app.add_handler(CommandHandler("alert", alert_command))
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
