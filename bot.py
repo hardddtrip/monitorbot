@@ -162,7 +162,8 @@ def generate_alert_message(pair):
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    # ✅ Fix: Use concurrent_updates(True) to prevent event loop errors
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
 
     # ✅ Add command handlers
     app.add_handler(CommandHandler("start", start_command))
@@ -173,11 +174,11 @@ def main():
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
-    # ✅ Initialize JobQueue
+    # ✅ Properly initialize JobQueue
     job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=900, first=10)  # 900 seconds = 15 min
+    job_queue.run_repeating(check_alerts, interval=900, first=10)
 
-    app.run_polling()  # ✅ No asyncio.run(), no event loop conflicts
+    app.run_polling()
 
 if __name__ == "__main__":
-    main()  # ✅ No asyncio.run(), no event loop issues
+    main()
