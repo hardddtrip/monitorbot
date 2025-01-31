@@ -85,7 +85,7 @@ async def detect_meme_coin_stage(application):
 ### --- Scheduler Setup --- ###
 def setup_scheduler(application):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=15, args=[application])
+    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=2, args=[application])
     scheduler.start()
 
 ### --- COMMANDS --- ###
