@@ -37,6 +37,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Greet the user\n"
         "/help - Show this help message\n"
         "/ping - Check if the bot is alive\n"
+        "/price - Get token price\n"
         "/alert - Check for alerts manually\n"
         "/subscribe_alerts - Enable auto alerts for 24h\n"
         "/unsubscribe_alerts - Disable auto alerts"
@@ -73,6 +74,32 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
     else:
         await update.message.reply_text("🔍 No significant alerts detected.")
+
+### --- PRICE COMMAND --- ###
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    pair = fetch_token_data(token_address)
+
+    if not pair:
+        await update.message.reply_text("⚠️ No trading data found for this token.")
+        return
+
+    price_usd = pair["priceUsd"]
+    volume_24h = pair["volume"]["h24"]
+    liquidity = pair["liquidity"]["usd"]
+    market_cap = pair.get("marketCap", "N/A")
+    dex_url = pair["url"]
+
+    message = escape_md(
+        f"💰 *Token Price (USD)*: ${price_usd}\n"
+        f"📊 *24h Volume*: ${volume_24h:,}\n"
+        f"💧 *Liquidity*: ${liquidity:,}\n"
+        f"🏦 *Market Cap (MC)*: ${market_cap:,}\n"
+        f"🔗 [View on DexScreener]({dex_url})"
+    )
+
+    await update.message.reply_text(message, parse_mode="MarkdownV2")
 
 ### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
 async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,16 +162,18 @@ def generate_alert_message(pair):
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(lambda app: app.job_queue.start()).build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # ✅ Add command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
-    # ✅ Initialize JobQueue properly
+    # ✅ Initialize JobQueue
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=900, first=10)  # 900 seconds = 15 min
 
