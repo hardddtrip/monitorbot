@@ -11,7 +11,7 @@ from telegram.ext import (
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")  # 🔹 Bitquery API Key
+BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")  # Using Bitquery for Solana transactions
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
 # ✅ Ensure API keys exist
@@ -80,7 +80,14 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No recent transactions found.")
         return
 
-    await update.message.reply_text(f"🔍 Recent Transactions:\n{transactions}")
+    message = "🔍 *Recent Solana Transactions:*\n"
+    for tx in transactions:
+        message += f"🔹 Block: {tx['block']}, Amount: {tx['amount']}\n"
+        message += f"📤 Sender: {tx['sender']['address']}\n"
+        message += f"📥 Receiver: {tx['receiver']['address']}\n"
+        message += f"🔗 [View Transaction](https://solscan.io/tx/{tx['transaction']['hash']})\n\n"
+
+    await update.message.reply_text(message, parse_mode="MarkdownV2")
 
 ### --- Automatic Alert Function (JobQueue) --- ###
 async def automatic_alert(context: ContextTypes.DEFAULT_TYPE):
@@ -95,7 +102,6 @@ def main():
         .token(TELEGRAM_BOT_TOKEN)
         .read_timeout(60)  # ✅ Increased timeout
         .connect_timeout(30)
-        .get_updates_request({"timeout": 60})  # ✅ Adjust polling settings
         .build()
     )
     
