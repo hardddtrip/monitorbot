@@ -167,7 +167,7 @@ def main():
 
     # ✅ **ENSURE `JobQueue` is setup inside `Application`**
     job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=60, first=10)  # 15 min interval
+    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 15 min interval
 
     # ✅ **Register command handlers**
     app.add_handler(CommandHandler("start", start_command))
