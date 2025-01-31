@@ -17,18 +17,19 @@ user_addresses = {}
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Respond to /start command."""
     await update.message.reply_text("Hello from the new v20-style bot!")
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send a list of commands."""
+    """Send a list of commands with correct MarkdownV2 escaping."""
+    
     help_text = (
         "📌 *Available Commands:*\n"
-        "/start - Greet the user\n"
-        "/help - Show this help message\n"
-        "/ping - Check if the bot is alive\n"
-        "/price - Get token price (default or your selected token)\n"
-        "/change <TOKEN_ADDRESS> - Change the token address to track"
+        "\\- `/start` \\- Greet the user\n"
+        "\\- `/help` \\- Show this help message\n"
+        "\\- `/ping` \\- Check if the bot is alive\n"
+        "\\- `/price` \\- Get token price \\(default or user selected\\)\n"
+        "\\- `/change <TOKEN_ADDRESS>` \\- Change the token address to track"
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    
+    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Respond to /ping command with 'Pong!'."""
