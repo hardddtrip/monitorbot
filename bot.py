@@ -97,7 +97,7 @@ async def detect_meme_coin_stage(application):
 async def run_scheduler(application):
     """Runs the scheduler inside an asyncio event loop."""
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=15, args=[application])
+    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=1, args=[application])
     scheduler.start()
 
 ### --- Price Command --- ###
