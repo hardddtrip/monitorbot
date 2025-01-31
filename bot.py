@@ -134,7 +134,7 @@ app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 async def main():
     """Start the bot with proper shutdown handling."""
-    await app.initialize()  # ✅ Ensure bot initializes correctly
+    await app.initialize()  # ✅ Ensure initialization
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -145,14 +145,16 @@ async def main():
     setup_scheduler(app)  # ✅ Setup background tasks
 
     try:
-        await app.start()  # ✅ Start the bot
-        await app.run_polling()  # ✅ Run polling loop
-            print("⚡ Bot is running...")
+        print("⚡ Bot is running...")
+        await app.start()  # ✅ Start bot
+        await app.run_polling()  # ✅ Start polling loop
     except asyncio.CancelledError:
-        print("⚠️ Bot is shutting down gracefully...")
+        print("⚠️ Bot is shutting down...")
     finally:
-        await app.stop()  # ✅ Properly stop the bot when shutdown is requested
-        
+        await app.stop()  # ✅ Ensure graceful shutdown
+        print("✅ Bot stopped successfully.")
+
+
     
     # Wait for shutdown signal
     stop_event = asyncio.Event()
@@ -163,6 +165,8 @@ async def main():
     await stop_event.wait()
     print("🔴 Shutting down bot gracefully...")
     await app.stop()
+
+# ✅ Ensure correct event loop handling
 
 if __name__ == "__main__":
     asyncio.run(main())
