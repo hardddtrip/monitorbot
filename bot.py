@@ -1,7 +1,7 @@
 import os
 import requests
 import time
-import asyncio  # ✅ Added for async handling
+import asyncio  # ✅ Fixed: Now properly imported
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -127,7 +127,22 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
-### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
+### --- FIXED SUBSCRIPTION FUNCTIONS --- ###
+async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    expiry_time = time.time() + 86400  # 24 hours from now
+    subscribed_users[user_id] = expiry_time
+    await update.message.reply_text("✅ You have subscribed to alerts for 24 hours!")
+
+async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    if user_id in subscribed_users:
+        del subscribed_users[user_id]
+        await update.message.reply_text("❌ You have unsubscribed from alerts.")
+    else:
+        await update.message.reply_text("⚠️ You are not subscribed to alerts.")
+
+### --- AUTOMATIC ALERT FUNCTION --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Check alerts every 2 minutes for subscribed users."""
     current_time = time.time()
@@ -167,8 +182,8 @@ def main():
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
-    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
-    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
+    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))  # ✅ Fixed
+    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))  # ✅ Fixed
 
     app.run_polling()
 
