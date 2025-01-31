@@ -133,8 +133,8 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 async def main():
-    """Start the Telegram bot and run polling."""
-    await app.initialize()  # ✅ Explicitly initialize the bot
+    """Start the bot with proper shutdown handling."""
+    await app.initialize()  # ✅ Ensure bot initializes correctly
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -142,11 +142,17 @@ async def main():
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("change", change_command))
 
-    setup_scheduler(app)  # ✅ Setup the scheduler
+    setup_scheduler(app)  # ✅ Setup background tasks
 
-    await app.start()  # ✅ Ensure app starts properly
-    await app.run_polling()  # ✅ Start the bot's polling
-    print("⚡ Bot is running...")
+    try:
+        await app.start()  # ✅ Start the bot
+        await app.run_polling()  # ✅ Run polling loop
+            print("⚡ Bot is running...")
+    except asyncio.CancelledError:
+        print("⚠️ Bot is shutting down gracefully...")
+    finally:
+        await app.stop()  # ✅ Properly stop the bot when shutdown is requested
+        
     
     # Wait for shutdown signal
     stop_event = asyncio.Event()
