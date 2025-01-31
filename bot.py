@@ -1,12 +1,16 @@
 import os
 import requests
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # For scheduling jobs
 
+# ✅ FIX 1: Ensure `asyncio` is imported
+import asyncio  
 
-# Get Telegram bot token from environment variables
+# Telegram bot token from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Set this in Heroku config
 
 # Default token address (if user hasn't changed it)
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
@@ -18,7 +22,8 @@ user_addresses = {}
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Respond to /start command."""
-    await update.message.reply_text("Hello from the new v20-style bot!")
+    await update.message.reply_text("Hello! I am monitoring meme coin activity.")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a list of commands with correct MarkdownV2 escaping."""
     
@@ -28,7 +33,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "\\- `/help` \\- Show this help message\n"
         "\\- `/ping` \\- Check if the bot is alive\n"
         "\\- `/price` \\- Get token price \\(default or user selected\\)\n"
-        "\\- `/change <TOKEN_ADDRESS>` \\- Change the token address to track"
+        "\\- `/change <TOKEN_ADDRESS>` \\- Change the token address to track\n"
         "🔍 Automatic alerts run *every 15 minutes*"
     )
     
@@ -70,7 +75,7 @@ async def detect_meme_coin_stage(application):
     alert_message = None
 
     # 🚀 Pump Detection (Rapid price increase)
-    if price_usd > 1.2 * float(pair["priceChange"]["h1"]):  # Example: 20% increase in 1 hour
+    if price_usd > 1.2 * float(pair["priceChange"]["h1"]):  
         alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
 
     # 🛒 Retail Arrival (Many small trades)
@@ -94,19 +99,15 @@ async def detect_meme_coin_stage(application):
         bot = application.bot
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=alert_message, parse_mode="MarkdownV2")
 
-### --- Scheduled Task Setup (Fixed) --- ###
-
 ### --- Scheduled Task Setup --- ###
 
-def setup_scheduler(application):
-    """Setup a background scheduler to check meme coin status every 15 minutes."""
+async def run_scheduler(application):
+    """✅ Runs the scheduler inside an asyncio event loop."""
     scheduler = AsyncIOScheduler()
     scheduler.add_job(detect_meme_coin_stage, "interval", minutes=15, args=[application])
     scheduler.start()
 
-
 ### --- Price Task Setup --- ###
-
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch and display token price for the user's selected address."""
@@ -130,16 +131,16 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         market_cap = pair.get("marketCap", "N/A")
         dex_url = pair["url"]
 
-        # Escape special characters for MarkdownV2
+        # ✅ FIX 2: Correctly escape MarkdownV2 special characters
         def escape_md(text):
             special_chars = "_*[]()~`>#+-=|{}.!"
             return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
         message = (
-            f"💰 *Token Price \$begin:math:text$USD\\$end:math:text$*: \\${escape_md(price_usd)}\n"
+            f"💰 *Token Price (USD)*: \\${escape_md(price_usd)}\n"
             f"📊 *24h Volume*: \\${escape_md(f'{volume_24h:,}')}\n"
             f"💧 *Liquidity*: \\${escape_md(f'{liquidity:,}')}\n"
-            f"🏦 *Market Cap \$begin:math:text$MC\\$end:math:text$*: \\${escape_md(f'{market_cap:,}')}\n"
+            f"🏦 *Market Cap (MC)*: \\${escape_md(f'{market_cap:,}')}\n"
             f"🔗 [View on DexScreener]({dex_url})"
         )
 
@@ -166,21 +167,22 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ### --- BOT MAIN FUNCTION --- ###
 
-def main():
+async def main():
+    """Runs the bot inside an asyncio event loop."""
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    #commands
+    # Setup scheduled alerts
+    asyncio.create_task(run_scheduler(app))
+
+    # Add handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))  # NEW COMMAND
+    app.add_handler(CommandHandler("change", change_command))
 
-    # Start the scheduler for automatic alerts
-    setup_scheduler(app)
-
-    #Start the bot
-    app.run_polling()
+    # Start bot
+    await app.run_polling()
 
 if __name__ == "__main__":
-   asyncio.run(main())
+    asyncio.run(main())  # ✅ Fixes "no running event loop" error
