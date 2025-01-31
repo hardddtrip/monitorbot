@@ -31,14 +31,15 @@ def escape_md(text):
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
-### --- SOLSCAN FETCH FUNCTION --- ###
+
+### --- SOLSCAN FETCH FUNCTION (WITH TIMEOUT) --- ###
 def fetch_solscan_data(token_address):
     """Fetch latest transactions & transfers for the token from Solscan API"""
     url = f"https://pro-api.solscan.io/v2.0/account/transactions?account={token_address}&limit=3"
     headers = {"accept": "application/json", "token": SOLSCAN_API_KEY}
     
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)  # ✅ Added timeout
         
         if response.status_code == 401:
             print("🚨 Solscan API Unauthorized! Check API Key.")
@@ -50,6 +51,9 @@ def fetch_solscan_data(token_address):
         if not data.get("data"):
             return None
         return data["data"]
+    except requests.exceptions.Timeout:
+        print("⚠️ Solscan API Timeout!")
+        return None
     except requests.exceptions.RequestException as e:
         print(f"Solscan API Error: {e}")
         return None
@@ -75,7 +79,7 @@ def generate_alert_message(pair, solscan_data):
             tx_sig = tx.get("txHash", "N/A")
             recent_transactions.append(f"🔹 {tx_type} [🔗 View](https://solscan.io/tx/{tx_sig})")
 
-# 🔹 Alert Conditions
+    # 🔹 Alert Conditions
     alert_message = None
     if price_usd > 1.2 * price_change_1h:
         alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
@@ -88,11 +92,11 @@ def generate_alert_message(pair, solscan_data):
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
         alert_message = "💀 *Retail Capitulation!* 🏳️"
 
-  # 🔹 If no alert, return None
+    # 🔹 If no alert, return None
     if not alert_message:
         return None
 
-  # 🔹 Create enhanced alert message
+    # 🔹 Create enhanced alert message
     message = escape_md(
         f"🚨 *{token_name} ({symbol}) ALERT!* 🚨\n\n"
         f"💰 *Current Price:* ${price_usd:.4f}\n"
@@ -229,14 +233,17 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
-    # ✅ Create Telegram Bot Application
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .read_timeout(60)  # ✅ Increased timeout
+        .connect_timeout(30)
+        .build()
+    )
 
-    # ✅ Set Up JobQueue for Automatic Alerts
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=120, first=10)  # 2 min interval
 
-    # ✅ Register Command Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
@@ -246,7 +253,7 @@ def main():
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))  # ✅ Fixed
 
     app.run_polling()
-
+    
 # ✅ **CORRECT EXECUTION (NO asyncio.run(main()))**
 if __name__ == "__main__":
     main()
