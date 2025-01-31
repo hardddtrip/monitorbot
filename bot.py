@@ -133,15 +133,19 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 async def main():
+    """Start the Telegram bot and run polling."""
+    await app.initialize()  # ✅ Explicitly initialize the bot
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))  # ✅ Now defined earlier
+    app.add_handler(CommandHandler("change", change_command))
 
-    setup_scheduler(app)  # ✅ Scheduler should be set up once
+    setup_scheduler(app)  # ✅ Setup the scheduler
 
-    await app.start()
+    await app.start()  # ✅ Ensure app starts properly
+    await app.run_polling()  # ✅ Start the bot's polling
     print("⚡ Bot is running...")
     
     # Wait for shutdown signal
