@@ -49,29 +49,27 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = requests.get(url)
         data = response.json()
 
-        # Validate response
         if "pairs" not in data or len(data["pairs"]) == 0:
             await update.message.reply_text("⚠️ No trading data found for this token.")
             return
 
-        # Extract relevant information
         pair = data["pairs"][0]
         price_usd = pair["priceUsd"]
         volume_24h = pair["volume"]["h24"]
         liquidity = pair["liquidity"]["usd"]
-        market_cap = pair.get("marketCap", "N/A")  # Handle missing market cap
+        market_cap = pair.get("marketCap", "N/A")
         dex_url = pair["url"]
 
-        # Escape special characters in Markdown
+        # Escape special characters for MarkdownV2
         def escape_md(text):
             special_chars = "_*[]()~`>#+-=|{}.!"
             return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
         message = (
-            f"💰 *Token Price (USD)*: ${escape_md(price_usd)}\n"
-            f"📊 *24h Volume*: ${escape_md(volume_24h):,}\n"
-            f"💧 *Liquidity*: ${escape_md(liquidity):,}\n"
-            f"🏦 *Market Cap (MC)*: ${escape_md(market_cap):,}\n"
+            f"💰 *Token Price \$begin:math:text$USD\\$end:math:text$*: ${escape_md(price_usd)}\n"
+            f"📊 *24h Volume*: ${escape_md(f'{volume_24h:,}')}\n"
+            f"💧 *Liquidity*: ${escape_md(f'{liquidity:,}')}\n"
+            f"🏦 *Market Cap \$begin:math:text$MC\\$end:math:text$*: ${escape_md(f'{market_cap:,}')}\n"
             f"🔗 [View on DexScreener]({dex_url})"
         )
 
@@ -79,7 +77,6 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error fetching price data: {e}")
-
 
 ### --- CHANGE TOKEN ADDRESS --- ###
 
