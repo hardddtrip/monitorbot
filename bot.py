@@ -2,6 +2,10 @@ from telegram.ext import ApplicationBuilder, CommandHandler
 from telegram import Update
 from telegram.ext import ContextTypes
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a list of commands or usage instructions."""
     help_text = (
@@ -17,7 +21,7 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pong!")
 
 def main():
-    app = ApplicationBuilder().token("YOUR_TOKEN_HERE").build()
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", help_command))  # or your existing start_command
     app.add_handler(CommandHandler("help", help_command))
