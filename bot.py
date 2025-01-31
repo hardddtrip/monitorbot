@@ -137,7 +137,7 @@ import signal
 
 async def main():
     """Start the bot and handle shutdown properly."""
-    await app.initialize()  # ✅ Properly initialize the bot
+    await app.initialize()  # ✅ Initialize Telegram bot
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -145,25 +145,35 @@ async def main():
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("change", change_command))
 
-    setup_scheduler(app)  # ✅ Set up background tasks
+    setup_scheduler(app)  # ✅ Set up scheduled tasks
 
     print("⚡ Bot is running...")
 
-    await app.start()  # ✅ Start the bot
+    # ✅ Use an Event for graceful shutdown
+    stop_event = asyncio.Event()
+
+    def stop_bot(*args):
+        """Signal handler to stop the bot."""
+        print("🛑 Received stop signal. Cleaning up...")
+        stop_event.set()  # ✅ Trigger event to stop
+
+    # ✅ Attach signal handlers
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, stop_bot)
+    loop.add_signal_handler(signal.SIGINT, stop_bot)
+
+    await app.start()  # ✅ Start bot
     await app.run_polling()  # ✅ Keep running until stopped
 
+    await stop_event.wait()  # ✅ Wait for stop signal
+    print("🔴 Shutting down bot gracefully...")
+
+    await app.stop()  # ✅ Stop Telegram bot cleanly
     print("✅ Bot stopped successfully.")
 
-async def shutdown():
-    """Gracefully shut down the bot."""
-    print("🔴 Shutting down bot gracefully...")
-    await app.stop()  # ✅ Properly stop the bot
-    print("✅ Cleanup complete.")
-
-# ✅ Ensure correct event loop handling
+# ✅ Ensure clean execution with event loop handling
 if __name__ == "__main__":
     try:
-        asyncio.run(main())  # ✅ Run the bot with proper async handling
+        asyncio.run(main())  # ✅ No nested event loops
     except (KeyboardInterrupt, SystemExit):
-        print("🛑 Bot stopped manually.")
-        asyncio.run(shutdown())  # ✅ Clean up when stopped manually
+        print("🛑 Bot manually stopped.")
