@@ -130,10 +130,10 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
         message = (
-            f"💰 *Token Price (USD)*: \\${escape_md(price_usd)}\n"
+            f"💰 *Token Price \\(USD\\)*: \\${escape_md(price_usd)}\n"
             f"📊 *24h Volume*: \\${escape_md(f'{volume_24h:,}')}\n"
             f"💧 *Liquidity*: \\${escape_md(f'{liquidity:,}')}\n"
-            f"🏦 *Market Cap (MC)*: \\${escape_md(f'{market_cap:,}')}\n"
+            f"🏦 *Market Cap \\(MC\\)*: \\${escape_md(f'{market_cap:,}')}\n"
             f"🔗 [View on DexScreener]({escape_md(dex_url)})"
         )
 
