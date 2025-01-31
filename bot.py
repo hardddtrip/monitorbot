@@ -27,6 +27,30 @@ def escape_md(text):
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
+
+### --- SOLSCAN FETCH FUNCTION --- ###
+def fetch_solscan_data(token_address):
+    """Fetch transaction and holder data from Solscan API."""
+    url = f"https://pro-api.solscan.io/v1/token/holders?tokenAddress={token_address}&limit=10"
+    headers = {"accept": "application/json"}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        
+        # If there's an error, return empty data
+        if "data" not in data:
+            return None
+        
+        return data["data"]  # Return holder data
+    except Exception as e:
+        print(f"⚠️ Solscan API Error: {e}")
+        return None  # Return None on failure
+
+
+
+
+
 ### --- TELEGRAM COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I will notify you about token activity.")
@@ -118,7 +142,7 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
 
 ### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Check alerts every 15 minutes for subscribed users."""
+    """Check alerts every 2 minutes for subscribed users."""
     current_time = time.time()
     expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
 
@@ -130,9 +154,10 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     for user_id in subscribed_users.keys():
         token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
         pair = fetch_token_data(token_address)
+        solscan_data = fetch_solscan_data(token_address)  # Fetch Solscan holders
 
         if pair:
-            alert_message = generate_alert_message(pair)
+            alert_message = generate_alert_message(pair, solscan_data)
             if alert_message:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -141,24 +166,56 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
                 )
 
 ### --- ALERT GENERATION FUNCTION --- ###
-def generate_alert_message(pair):
-    """Generate alert messages based on token metrics."""
-    price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
-    liquidity = float(pair["liquidity"]["usd"])
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+def generate_alert_message(pair, solscan_data):
+    """Generate alert messages based on token metrics including Solscan data."""
 
+    # 🔹 Extract token details
+    token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
+    symbol = pair.get("baseToken", {}).get("symbol", "???")
+    price_usd = float(pair["priceUsd"])
+    liquidity = float(pair["liquidity"]["usd"])
+    volume_24h = float(pair["volume"]["h24"])
+
+    # 🔹 Price change over different time periods
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
+
+    # 🔹 Solscan holder data (get number of holders from API)
+    holder_count = len(solscan_data) if solscan_data else "N/A"
+
+    # 🔹 Generate alert messages
+    alert_message = None
     if price_usd > 1.2 * price_change_1h:
-        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        return "🛍 *Retail Arrival Detected!*"
+        alert_message = "🛍 *Retail Arrival Detected!*"
     elif liquidity > 2000000 and volume_24h > 5000000:
-        return "🔄 *Market Maker Transfer!* 📊"
+        alert_message = "🔄 *Market Maker Transfer!* 📊"
     elif price_usd < 0.8 * price_change_1h:
-        return "⚠️ *Dump Alert!* 💥"
+        alert_message = "⚠️ *Dump Alert!* 💥"
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        return "💀 *Retail Capitulation!* 🏳️"
-    return None
+        alert_message = "💀 *Retail Capitulation!* 🏳️"
+
+    # 🔹 If no alert, return None
+    if not alert_message:
+        return None
+
+    # 🔹 Create enhanced alert message
+    message = escape_md(
+        f"🚨 *{token_name} ({symbol}) ALERT!* 🚨\n\n"
+        f"💰 *Current Price:* ${price_usd:.4f}\n"
+        f"📉 *Price Change:*\n"
+        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
+        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
+        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
+        f"📊 *Liquidity:* ${liquidity:,.0f}\n"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n"
+        f"👥 *Total Holders:* {holder_count}\n\n"
+        f"⚠️ {alert_message}"
+    )
+    
+    return message
 
 ### --- BOT MAIN FUNCTION --- ###
 def main():
