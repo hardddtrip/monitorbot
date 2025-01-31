@@ -87,7 +87,7 @@ async def detect_meme_coin_stage(application):
 ### --- Scheduler Setup --- ###
 def setup_scheduler(application):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=2, args=[application])
+    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=15, args=[application])
     scheduler.start()
 
 ### --- COMMANDS --- ###
@@ -121,7 +121,7 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Allow users to change the token address they want to track."""
     user_id = update.message.chat_id
 
-    if not context.args or len(context.args[0]) < 10:  # Ensure valid input
+    if not context.args or len(context.args[0]) < 10:
         await update.message.reply_text("⚠️ Usage: /change <VALID_TOKEN_ADDRESS>")
         return
 
@@ -144,9 +144,9 @@ async def main():
 
     setup_scheduler(app)  # ✅ Setup background tasks
 
+    print("⚡ Bot is running...")
     try:
-        print("⚡ Bot is running...")
-        await app.start()  # ✅ Start bot
+        await app.start()
         await app.run_polling()  # ✅ Start polling loop
     except asyncio.CancelledError:
         print("⚠️ Bot is shutting down...")
@@ -154,19 +154,8 @@ async def main():
         await app.stop()  # ✅ Ensure graceful shutdown
         print("✅ Bot stopped successfully.")
 
-
-    
-    # Wait for shutdown signal
-    stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGTERM, stop_event.set)
-    loop.add_signal_handler(signal.SIGINT, stop_event.set)
-
-    await stop_event.wait()
-    print("🔴 Shutting down bot gracefully...")
-    await app.stop()
-
-# ✅ Ensure correct event loop handling
-
+# ✅ Correct event loop handling (No `asyncio.run()`)
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())  # ✅ Run bot cleanly
