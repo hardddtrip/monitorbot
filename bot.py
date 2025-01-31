@@ -1,3 +1,5 @@
+import os
+
 from telegram.ext import ApplicationBuilder, CommandHandler
 from telegram import Update
 from telegram.ext import ContextTypes
