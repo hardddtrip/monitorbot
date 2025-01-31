@@ -161,7 +161,14 @@ async def main():
     await app.run_polling()
 
 # ✅ FIX: Proper event loop handling for Heroku
+import asyncio
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())  # Non-blocking
-    loop.run_forever()  # Keeps the bot running in Heroku
+    try:
+        loop = asyncio.get_running_loop()  # Check if an event loop exists
+    except RuntimeError:
+        loop = asyncio.new_event_loop()  # Create a new event loop if none exists
+        asyncio.set_event_loop(loop)
+
+    loop.create_task(main())  # ✅ Schedule `main()` as a background task
+    loop.run_forever()  # ✅ Keeps the bot running in Heroku
