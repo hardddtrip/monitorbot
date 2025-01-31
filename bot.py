@@ -87,7 +87,7 @@ async def detect_meme_coin_stage(application):
 ### --- Scheduler Setup --- ###
 def setup_scheduler(application):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=15, args=[application])
+    scheduler.add_job(detect_meme_coin_stage, "interval", minutes=2, args=[application])
     scheduler.start()
 
 ### --- COMMANDS --- ###
@@ -121,7 +121,7 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Allow users to change the token address they want to track."""
     user_id = update.message.chat_id
 
-    if not context.args or len(context.args[0]) < 10:
+    if not context.args or len(context.args[0]) < 10:  # Ensure valid input
         await update.message.reply_text("⚠️ Usage: /change <VALID_TOKEN_ADDRESS>")
         return
 
@@ -147,20 +147,29 @@ async def main():
     print("⚡ Bot is running...")
     try:
         await app.start()
-        await app.run_polling()  # ✅ Start polling loop
+        await app.run_polling()
     except asyncio.CancelledError:
         print("⚠️ Bot is shutting down...")
     finally:
-        await app.stop()  # ✅ Ensure graceful shutdown
+        await app.stop()
         print("✅ Bot stopped successfully.")
 
-# ✅ **Correct Event Loop Handling**
+### ✅ FINAL FIX: Proper Event Loop Handling ###
 if __name__ == "__main__":
+    if sys.platform == "win32":  
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     try:
-        loop = asyncio.new_event_loop()  # ✅ Always create a fresh event loop
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())  # ✅ Run bot cleanly
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            print("⚠️ Event loop already running, scheduling main() as a task.")
+            loop.create_task(main())  # ✅ Run as a task if loop is already running
+        else:
+            loop.run_until_complete(main())  # ✅ Otherwise, run normally
     except KeyboardInterrupt:
         print("🛑 Bot stopped by user.")
+    except RuntimeError as e:
+        print(f"🔥 Event loop error: {e}")
     finally:
-        loop.close()
+        if not loop.is_closed():
+            loop.close()
