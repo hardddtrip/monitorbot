@@ -132,9 +132,12 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ### --- BOT SETUP --- ###
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
+import asyncio
+import signal
+
 async def main():
-    """Start the bot with proper shutdown handling."""
-    await app.initialize()  # ✅ Ensure initialization
+    """Start the bot and handle shutdown properly."""
+    await app.initialize()  # ✅ Properly initialize the bot
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -142,30 +145,25 @@ async def main():
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("change", change_command))
 
-    setup_scheduler(app)  # ✅ Setup background tasks
+    setup_scheduler(app)  # ✅ Set up background tasks
 
     print("⚡ Bot is running...")
-    try:
-        await app.start()
-        await app.run_polling()
-    except asyncio.CancelledError:
-        print("⚠️ Bot is shutting down...")
-    finally:
-        await app.stop()
-        print("✅ Bot stopped successfully.")
 
-### ✅ FINAL FIX: Proper Event Loop Handling ###
+    await app.start()  # ✅ Start the bot
+    await app.run_polling()  # ✅ Keep running until stopped
+
+    print("✅ Bot stopped successfully.")
+
+async def shutdown():
+    """Gracefully shut down the bot."""
+    print("🔴 Shutting down bot gracefully...")
+    await app.stop()  # ✅ Properly stop the bot
+    print("✅ Cleanup complete.")
+
+# ✅ Ensure correct event loop handling
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
     try:
-        loop = asyncio.new_event_loop()  # ✅ Always start with a fresh event loop
-        asyncio.set_event_loop(loop)     # ✅ Set this as the active loop
-        loop.run_until_complete(main())  # ✅ Run the main bot loop
-    except KeyboardInterrupt:
-        print("🛑 Bot stopped by user.")
-    except RuntimeError as e:
-        print(f"🔥 Event loop error: {e}")
-    finally:
-        print("🔴 Exiting cleanly...")
+        asyncio.run(main())  # ✅ Run the bot with proper async handling
+    except (KeyboardInterrupt, SystemExit):
+        print("🛑 Bot stopped manually.")
+        asyncio.run(shutdown())  # ✅ Clean up when stopped manually
