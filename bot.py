@@ -6,7 +6,8 @@ from telegram.ext import ContextTypes
 
 TELEGRAM_BOT_TOKEN = os.getenv.get("TELEGRAM_BOT_TOKEN")
 
-
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello from the new v20-style bot!")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a list of commands or usage instructions."""
