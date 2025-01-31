@@ -1,14 +1,13 @@
 import os
 import requests
 import time
+import asyncio
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from apscheduler.schedulers.background import BackgroundScheduler
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
 # ✅ Ensure token exists
@@ -69,23 +68,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ No trading data found for this token.")
         return
 
-    price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
-    liquidity = float(pair["liquidity"]["usd"])
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-
-    alert_message = None
-    if price_usd > 1.2 * price_change_1h:
-        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        alert_message = "🛍 *Retail Arrival Detected!*"
-    elif liquidity > 2000000 and volume_24h > 5000000:
-        alert_message = "🔄 *Market Maker Transfer!* 📊"
-    elif price_usd < 0.8 * price_change_1h:
-        alert_message = "⚠️ *Dump Alert!* 💥"
-    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        alert_message = "💀 *Retail Capitulation!* 🏳️"
-
+    alert_message = generate_alert_message(pair)
     if alert_message:
         await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
     else:
@@ -106,61 +89,69 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
     else:
         await update.message.reply_text("⚠️ You are not subscribed to alerts.")
 
-### --- AUTOMATIC ALERT JOB --- ###
-def check_alerts():
+### --- AUTOMATIC ALERT FUNCTION --- ###
+async def check_alerts(application):
     """Check alerts every 15 minutes for subscribed users."""
-    current_time = time.time()
-    for user_id, expiry_time in list(subscribed_users.items()):
-        if current_time > expiry_time:
-            del subscribed_users[user_id]  # Unsubscribe expired users
-            continue
+    while True:
+        current_time = time.time()
+        expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
 
-        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-        pair = fetch_token_data(token_address)
+        # Remove expired subscriptions
+        for user_id in expired_users:
+            del subscribed_users[user_id]
 
-        if not pair:
-            continue
+        # Process active subscriptions
+        for user_id in subscribed_users.keys():
+            token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+            pair = fetch_token_data(token_address)
 
-        price_usd = float(pair["priceUsd"])
-        volume_24h = float(pair["volume"]["h24"])
-        liquidity = float(pair["liquidity"]["usd"])
-        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+            if pair:
+                alert_message = generate_alert_message(pair)
+                if alert_message:
+                    await application.bot.send_message(
+                        chat_id=user_id,
+                        text=escape_md(alert_message),
+                        parse_mode="MarkdownV2"
+                    )
 
-        alert_message = None
-        if price_usd > 1.2 * price_change_1h:
-            alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-        elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-            alert_message = "🛍 *Retail Arrival Detected!*"
-        elif liquidity > 2000000 and volume_24h > 5000000:
-            alert_message = "🔄 *Market Maker Transfer!* 📊"
-        elif price_usd < 0.8 * price_change_1h:
-            alert_message = "⚠️ *Dump Alert!* 💥"
-        elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-            alert_message = "💀 *Retail Capitulation!* 🏳️"
+        await asyncio.sleep(900)  # Sleep for 15 minutes
 
-        if alert_message:
-            app.bot.send_message(chat_id=user_id, text=escape_md(alert_message), parse_mode="MarkdownV2")
+### --- ALERT GENERATION FUNCTION --- ###
+def generate_alert_message(pair):
+    """Generate alert messages based on token metrics."""
+    price_usd = float(pair["priceUsd"])
+    volume_24h = float(pair["volume"]["h24"])
+    liquidity = float(pair["liquidity"]["usd"])
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
-### --- SETUP BOT & JOBS --- ###
-def main():
+    if price_usd > 1.2 * price_change_1h:
+        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        return "🛍 *Retail Arrival Detected!*"
+    elif liquidity > 2000000 and volume_24h > 5000000:
+        return "🔄 *Market Maker Transfer!* 📊"
+    elif price_usd < 0.8 * price_change_1h:
+        return "⚠️ *Dump Alert!* 💥"
+    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        return "💀 *Retail Capitulation!* 🏳️"
+    return None
+
+### --- BOT MAIN FUNCTION --- ###
+async def main():
     global app
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))
     app.add_handler(CommandHandler("alert", alert_command))
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
-    # ✅ Schedule job for automatic alerts every 15 minutes
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(check_alerts, "interval", minutes=15)
-    scheduler.start()
+    # Start background alert monitoring
+    asyncio.create_task(check_alerts(app))
 
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
