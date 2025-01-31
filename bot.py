@@ -27,121 +27,7 @@ def escape_md(text):
     special_chars = "_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
-### --- FETCH PRICE DATA FROM DEXSCREENER --- ###
-def fetch_token_data(token_address):
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        if "pairs" not in data or len(data["pairs"]) == 0:
-            return None
-        return data["pairs"][0]
-    except Exception:
-        return None
-
-### --- FETCH ON-CHAIN DATA FROM SOLSCAN --- ###
-def fetch_solscan_data(token_address):
-    url = f"https://pro-api.solscan.io/v1/token/{token_address}"
-    headers = {"accept": "application/json"}
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-        return data.get("data", {})
-    except Exception:
-        return {}
-
-### --- GENERATE PRICE MESSAGE --- ###
-def generate_price_message(pair, solscan_data):
-    """Generate detailed price message with Solscan data."""
-
-    # 🔹 Extract basic token info
-    token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
-    symbol = pair.get("baseToken", {}).get("symbol", "???")
-    
-    # 🔹 Ensure numeric values are properly converted to float or default to 0
-    def safe_float(value):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return 0.0  # Default fallback for non-numeric values
-
-    price_usd = safe_float(pair.get("priceUsd"))
-    liquidity = safe_float(pair.get("liquidity", {}).get("usd", 0))
-    volume_24h = safe_float(pair.get("volume", {}).get("h24", 0))
-
-    # 🔹 Price change over different periods
-    price_change_5m = safe_float(pair.get("priceChange", {}).get("m5", 0))
-    price_change_1h = safe_float(pair.get("priceChange", {}).get("h1", 0))
-    price_change_24h = safe_float(pair.get("priceChange", {}).get("h24", 0))
-
-    # 🔹 Generate the message with validated numeric values
-    message = escape_md(
-        f"💰 *{token_name} ({symbol}) Price Data*\n"
-        f"🔹 *Current Price:* ${price_usd:.4f}\n"
-        f"📉 *Price Change:*\n"
-        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
-        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
-        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
-        f"📊 *Liquidity:* ${liquidity:,.0f}\n"
-        f"📈 *24h Volume:* ${volume_24h:,.0f}\n"
-    )
-    
-    return message
-
-### --- GENERATE ALERT MESSAGE --- ###
-def generate_alert_message(pair, solscan_data):
-    token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
-    symbol = pair.get("baseToken", {}).get("symbol", "???")
-    price_usd = float(pair["priceUsd"])
-    liquidity = float(pair["liquidity"]["usd"])
-    volume_24h = float(pair["volume"]["h24"])
-
-    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-    price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
-    
-    holders = solscan_data.get("holders", "N/A")
-
-    alert_message = None
-    if price_usd > 1.2 * price_change_1h:
-        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        alert_message = "🛍 *Retail Arrival Detected!*"
-    elif liquidity > 2000000 and volume_24h > 5000000:
-        alert_message = "🔄 *Market Maker Transfer!* 📊"
-    elif price_usd < 0.8 * price_change_1h:
-        alert_message = "⚠️ *Dump Alert!* 💥"
-    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        alert_message = "💀 *Retail Capitulation!* 🏳️"
-
-    if not alert_message:
-        return None
-
-    return escape_md(
-        f"🚨 *{token_name} ({symbol}) ALERT!* 🚨\n\n"
-        f"💰 *Current Price:* ${price_usd:.4f}\n"
-        f"📉 *Price Change:*\n"
-        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
-        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
-        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
-        f"👥 *Holders:* {holders}\n"
-        f"⚠️ {alert_message}"
-    )
-
-### --- CHECK ALERTS EVERY 2 MINUTES --- ###
-async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Check alerts every 2 minutes for subscribed users."""
-    for user_id in subscribed_users.keys():
-        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-        pair = fetch_token_data(token_address)
-        solscan_data = fetch_solscan_data(token_address)
-
-        if pair:
-            alert_message = generate_alert_message(pair, solscan_data)
-            if alert_message:
-                await context.bot.send_message(chat_id=user_id, text=escape_md(alert_message), parse_mode="MarkdownV2")
-
-### --- TELEGRAM COMMAND HANDLERS --- ###
+### --- TELEGRAM COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Hello! I will notify you about token activity.")
 
@@ -161,29 +47,136 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pong!")
 
-async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+### --- PRICE FETCHING --- ###
+def fetch_token_data(token_address):
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if "pairs" not in data or len(data["pairs"]) == 0:
+            return None
+        return data["pairs"][0]
+    except Exception:
+        return None
+
+### --- ALERT FUNCTION --- ###
+async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
     pair = fetch_token_data(token_address)
-    solscan_data = fetch_solscan_data(token_address)
 
     if not pair:
         await update.message.reply_text("⚠️ No trading data found for this token.")
         return
 
-    message = generate_price_message(pair, solscan_data)
+    alert_message = generate_alert_message(pair)
+    if alert_message:
+        await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
+    else:
+        await update.message.reply_text("🔍 No significant alerts detected.")
+
+### --- PRICE COMMAND --- ###
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    pair = fetch_token_data(token_address)
+
+    if not pair:
+        await update.message.reply_text("⚠️ No trading data found for this token.")
+        return
+
+    price_usd = pair["priceUsd"]
+    volume_24h = pair["volume"]["h24"]
+    liquidity = pair["liquidity"]["usd"]
+    market_cap = pair.get("marketCap", "N/A")
+    dex_url = pair["url"]
+
+    message = escape_md(
+        f"💰 *Token Price (USD)*: ${price_usd}\n"
+        f"📊 *24h Volume*: ${volume_24h:,}\n"
+        f"💧 *Liquidity*: ${liquidity:,}\n"
+        f"🏦 *Market Cap (MC)*: ${market_cap:,}\n"
+        f"🔗 [View on DexScreener]({dex_url})"
+    )
+
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
-### --- MAIN FUNCTION --- ###
-def main():
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 2 min interval
+### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
+async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    expiry_time = time.time() + 86400  # 24 hours from now
+    subscribed_users[user_id] = expiry_time
+    await update.message.reply_text("✅ You have subscribed to alerts for 24 hours!")
 
+async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    if user_id in subscribed_users:
+        del subscribed_users[user_id]
+        await update.message.reply_text("❌ You have unsubscribed from alerts.")
+    else:
+        await update.message.reply_text("⚠️ You are not subscribed to alerts.")
+
+### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Check alerts every 15 minutes for subscribed users."""
+    current_time = time.time()
+    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
+
+    # Remove expired subscriptions
+    for user_id in expired_users:
+        del subscribed_users[user_id]
+
+    # Process active subscriptions
+    for user_id in subscribed_users.keys():
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        pair = fetch_token_data(token_address)
+
+        if pair:
+            alert_message = generate_alert_message(pair)
+            if alert_message:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=escape_md(alert_message),
+                    parse_mode="MarkdownV2"
+                )
+
+### --- ALERT GENERATION FUNCTION --- ###
+def generate_alert_message(pair):
+    """Generate alert messages based on token metrics."""
+    price_usd = float(pair["priceUsd"])
+    volume_24h = float(pair["volume"]["h24"])
+    liquidity = float(pair["liquidity"]["usd"])
+    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+
+    if price_usd > 1.2 * price_change_1h:
+        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        return "🛍 *Retail Arrival Detected!*"
+    elif liquidity > 2000000 and volume_24h > 5000000:
+        return "🔄 *Market Maker Transfer!* 📊"
+    elif price_usd < 0.8 * price_change_1h:
+        return "⚠️ *Dump Alert!* 💥"
+    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        return "💀 *Retail Capitulation!* 🏳️"
+    return None
+
+### --- BOT MAIN FUNCTION --- ###
+def main():
+    # ✅ **NO `Updater` ANYWHERE** ❌
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # ✅ **ENSURE `JobQueue` is setup inside `Application`**
+    job_queue = app.job_queue
+    job_queue.run_repeating(check_alerts, interval=120, first=10)  # 15 min interval
+
+    # ✅ **Register command handlers**
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("alert", alert_command))
+    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
+    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
 
     app.run_polling()
 
