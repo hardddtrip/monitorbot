@@ -1,11 +1,11 @@
 import os
 import requests
-import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # ✅ Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 
 # ✅ Ensure token exists
@@ -23,16 +23,17 @@ def escape_md(text):
 
 ### --- CORE COMMANDS --- ###
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hello! Use /alert to check token status.")
+    await update.message.reply_text("Hello from the bot!")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
         "📌 *Available Commands:*\n"
         "/start - Greet the user\n"
         "/help - Show this help message\n"
-        "/alert - Check token alerts manually\n"
+        "/ping - Check if the bot is alive\n"
         "/price - Get token price\n"
-        "/change <TOKEN_ADDRESS> - Change token address"
+        "/change <TOKEN_ADDRESS> - Change token address\n"
+        "/alert - Check for alerts on demand"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -51,9 +52,8 @@ async def fetch_token_data(token_address):
     except Exception:
         return None
 
-### --- ALERT COMMAND --- ###
+### --- ALERT FUNCTION --- ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manually fetch alerts when user types /alert."""
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
     pair = await fetch_token_data(token_address)
@@ -67,22 +67,22 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     liquidity = float(pair["liquidity"]["usd"])
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
-    alert_message = "📢 *Token Alert:*\n"
-
+    alert_message = None
     if price_usd > 1.2 * price_change_1h:
-        alert_message += "🚀 *Pump Alert!* Price is surging!\n"
+        alert_message = "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        alert_message += "🛍 *Retail Arrival!* Many new buyers.\n"
+        alert_message = "🛍 *Retail Arrival Detected!*"
     elif liquidity > 2000000 and volume_24h > 5000000:
-        alert_message += "🔄 *Market Maker Transfer!* Big liquidity shift.\n"
+        alert_message = "🔄 *Market Maker Transfer!* 📊"
     elif price_usd < 0.8 * price_change_1h:
-        alert_message += "⚠️ *Dump Alert!* Price is dropping fast.\n"
+        alert_message = "⚠️ *Dump Alert!* 💥"
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        alert_message += "💀 *Retail Capitulation!* Many small sellers exiting.\n"
-    else:
-        alert_message += "✅ No major alerts detected."
+        alert_message = "💀 *Retail Capitulation!* 🏳️"
 
-    await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
+    if alert_message:
+        await update.message.reply_text(escape_md(alert_message), parse_mode="MarkdownV2")
+    else:
+        await update.message.reply_text("🔍 No significant alerts detected.")
 
 ### --- PRICE COMMAND --- ###
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,17 +126,18 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ### --- BOT SETUP --- ###
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-async def main():
-    """Start the bot with proper command handling."""
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("change", change_command))
-    app.add_handler(CommandHandler("alert", alert_command))  # ✅ New alert command
+app.add_handler(CommandHandler("start", start_command))
+app.add_handler(CommandHandler("help", help_command))
+app.add_handler(CommandHandler("ping", ping_command))
+app.add_handler(CommandHandler("price", price_command))
+app.add_handler(CommandHandler("change", change_command))
+app.add_handler(CommandHandler("alert", alert_command))
 
+async def main():
+    """Start the bot."""
     print("⚡ Bot is running...")
-    await app.run_polling()  # ✅ No more background loops
+    await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import asyncio
+    asyncio.run(main())  # ✅ No event loop conflicts
