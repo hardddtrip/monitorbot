@@ -146,10 +146,11 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_addresses[user_id] = token_address
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
 
+
 import asyncio
 from telegram.ext import ApplicationBuilder, CommandHandler
 
-# ✅ Initialize bot globally
+# ✅ Initialize bot
 app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
 # ✅ Define main function
@@ -166,11 +167,6 @@ async def main():
 
 # ✅ Ensure correct event loop handling
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_running_loop()  # ✅ Get existing loop if available
-    except RuntimeError:
-        loop = asyncio.new_event_loop()  # ✅ Create a new loop if none exists
-        asyncio.set_event_loop(loop)
+    asyncio.run(main())  # ✅ Run the bot cleanly, avoiding nested event loops
 
-    loop.create_task(main())  # ✅ Run bot as an async task
-    loop.run_forever()  # ✅ Keep the bot running
+
