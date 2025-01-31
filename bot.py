@@ -52,24 +52,41 @@ def fetch_solscan_data(token_address):
 
 ### --- GENERATE PRICE MESSAGE --- ###
 def generate_price_message(pair, solscan_data):
+    """Generate detailed price message with Solscan data."""
+
+    # 🔹 Extract basic token info
     token_name = pair.get("baseToken", {}).get("name", "Unknown Token")
     symbol = pair.get("baseToken", {}).get("symbol", "???")
-    price_usd = pair["priceUsd"]
-    volume_24h = pair["volume"]["h24"]
-    liquidity = pair["liquidity"]["usd"]
-    market_cap = solscan_data.get("marketCap", "N/A")
-    holders = solscan_data.get("holders", "N/A")
-    dex_url = pair["url"]
+    
+    # 🔹 Ensure numeric values are properly converted to float or default to 0
+    def safe_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0  # Default fallback for non-numeric values
 
-    return escape_md(
+    price_usd = safe_float(pair.get("priceUsd"))
+    liquidity = safe_float(pair.get("liquidity", {}).get("usd", 0))
+    volume_24h = safe_float(pair.get("volume", {}).get("h24", 0))
+
+    # 🔹 Price change over different periods
+    price_change_5m = safe_float(pair.get("priceChange", {}).get("m5", 0))
+    price_change_1h = safe_float(pair.get("priceChange", {}).get("h1", 0))
+    price_change_24h = safe_float(pair.get("priceChange", {}).get("h24", 0))
+
+    # 🔹 Generate the message with validated numeric values
+    message = escape_md(
         f"💰 *{token_name} ({symbol}) Price Data*\n"
-        f"🔹 *Price:* ${price_usd:.4f}\n"
-        f"📊 *24h Volume:* ${volume_24h:,}\n"
-        f"💧 *Liquidity:* ${liquidity:,}\n"
-        f"🏦 *Market Cap:* ${market_cap:,}\n"
-        f"👥 *Holders:* {holders}\n"
-        f"🔗 [View on DexScreener]({dex_url})"
+        f"🔹 *Current Price:* ${price_usd:.4f}\n"
+        f"📉 *Price Change:*\n"
+        f"   • ⏳ 5 min: {price_change_5m:.2f}%\n"
+        f"   • ⏲️ 1 hour: {price_change_1h:.2f}%\n"
+        f"   • 📅 24 hours: {price_change_24h:.2f}%\n"
+        f"📊 *Liquidity:* ${liquidity:,.0f}\n"
+        f"📈 *24h Volume:* ${volume_24h:,.0f}\n"
     )
+    
+    return message
 
 ### --- GENERATE ALERT MESSAGE --- ###
 def generate_alert_message(pair, solscan_data):
