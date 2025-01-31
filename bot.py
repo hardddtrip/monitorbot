@@ -156,20 +156,16 @@ async def main():
 
 ### ✅ FINAL FIX: Proper Event Loop Handling ###
 if __name__ == "__main__":
-    if sys.platform == "win32":  
+    if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            print("⚠️ Event loop already running, scheduling main() as a task.")
-            loop.create_task(main())  # ✅ Run as a task if loop is already running
-        else:
-            loop.run_until_complete(main())  # ✅ Otherwise, run normally
+        loop = asyncio.new_event_loop()  # ✅ Always start with a fresh event loop
+        asyncio.set_event_loop(loop)     # ✅ Set this as the active loop
+        loop.run_until_complete(main())  # ✅ Run the main bot loop
     except KeyboardInterrupt:
         print("🛑 Bot stopped by user.")
     except RuntimeError as e:
         print(f"🔥 Event loop error: {e}")
     finally:
-        if not loop.is_closed():
-            loop.close()
+        print("🔴 Exiting cleanly...")
