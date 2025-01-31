@@ -52,8 +52,6 @@ async def fetch_token_data(token_address):
     except Exception:
         return None
 
-
-
 async def detect_meme_coin_stage(application):
     """Detect meme coin lifecycle stage & send alerts every 15 minutes."""
     token_address = DEFAULT_TOKEN_ADDRESS  # Tracking only one token for now
@@ -67,7 +65,7 @@ async def detect_meme_coin_stage(application):
     price_usd = float(pair["priceUsd"])
     volume_24h = float(pair["volume"]["h24"])
     liquidity = float(pair["liquidity"]["usd"])
-    
+
     # Define detection logic (heuristics)
     alert_message = None
 
@@ -93,9 +91,10 @@ async def detect_meme_coin_stage(application):
 
     # Send Alert to Telegram
     if alert_message:
-        chat_id = os.getenv("TELEGRAM_CHAT_ID")  # Set this to your chat/group ID
         bot = application.bot
-        await bot.send_message(chat_id=chat_id, text=alert_message, parse_mode="MarkdownV2")
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=alert_message, parse_mode="MarkdownV2")
+
+### --- Scheduled Task Setup (Fixed) --- ###
 
 ### --- Scheduled Task Setup --- ###
 
@@ -184,4 +183,4 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main()
+   asyncio.run(main())
