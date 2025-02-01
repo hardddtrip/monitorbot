@@ -346,39 +346,46 @@ def fetch_token_holders(token_address, limit=20):
         return None
 
 def fetch_recent_trades(token_address, limit=10):
-    """Enhanced recent trades fetch with RPC API."""
+    """Enhanced recent trades fetch with DAS API integration."""
     try:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": "my-id",
-            "method": "getSignaturesForAddress",
-            "params": [
-                token_address,
-                {
-                    "limit": limit
-                }
-            ]
+        url = "https://api.helius.xyz/v0/addresses/" + token_address + "/transactions"
+        
+        params = {
+            "api-key": HELIUS_API_KEY,
+            "before": str(int(time.time())),  # Current time
+            "limit": str(limit)
         }
-        response = requests.post(HELIUS_RPC_URL, json=payload)
+        
+        response = requests.get(url, params=params)
         
         if response.status_code == 200:
             data = response.json()
-            if "result" in data:
-                trades = []
-                for tx in data["result"]:
-                    # Get detailed transaction info
-                    tx_details = fetch_transaction_details(tx["signature"])
-                    if tx_details:
-                        trade_info = {
-                            "signature": tx["signature"],
-                            "blockTime": tx["blockTime"],
-                            "type": tx_details.get("type", "unknown"),
-                            "amount": tx_details.get("amount", 0),
-                            "success": tx["err"] is None
-                        }
-                        trades.append(trade_info)
-                return trades
+            trades = []
+            
+            for tx in data:  # Process all returned transactions
+                # Extract basic transaction info
+                trade_info = {
+                    "signature": tx.get("signature", "Unknown"),
+                    "timestamp": tx.get("timestamp", 0),
+                    "type": "SWAP"
+                }
+                
+                # Try to extract token amounts from the transaction
+                if "tokenTransfers" in tx:
+                    for transfer in tx.get("tokenTransfers", []):
+                        if transfer.get("mint") == token_address:
+                            trade_info["amount"] = float(transfer.get("tokenAmount", 0)) / (10 ** 6)  # Convert to EGG
+                            trade_info["from"] = transfer.get("fromUserAccount", "Unknown")
+                            trade_info["to"] = transfer.get("toUserAccount", "Unknown")
+                            trades.append(trade_info)
+                            break
+            
+            return trades[:limit]  # Return only up to the limit
+        
+        print(f"Error response from Helius API: {response.status_code}")
+        print(response.text)
         return None
+        
     except Exception as e:
         print(f"Error fetching recent trades: {str(e)}")
         return None
@@ -475,14 +482,21 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = "*🔄 Recent Trades*\n\n"
     for trade in trades[:5]:
         sig = trade["signature"]
-        timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%Y-%m-%d %H:%M:%S")
-        amount = trade["amount"]
-        trade_type = trade["type"]
+        timestamp = datetime.fromtimestamp(trade["timestamp"]/1000).strftime("%Y-%m-%d %H:%M:%S")
+        amount = trade.get("amount", 0)
         
-        emoji = "🟢" if trade_type == "Buy" else "🔴" if trade_type == "Sell" else "⚪️"
-        message += f"{emoji} *{trade_type}*: {amount:,.0f} tokens\n"
-        message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
-        message += f"📅 {timestamp}\n\n"
+        alert_message = (
+            f"*Trade at {timestamp}*:\n"
+            f"💰 Amount: {amount:,.2f} EGG\n"
+            f"📤 From: `{trade.get('from', 'Unknown')}`\n"
+            f"📥 To: `{trade.get('to', 'Unknown')}`\n"
+            f"🔗 [View Transaction](https://solscan.io/tx/{sig})\n\n"
+        )
+        
+        message += alert_message
+    
+    if not trades:
+        message += "No recent trades found in the last hour."
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
@@ -547,6 +561,31 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in metadata command: {str(e)}")
         await update.message.reply_text("❌ An error occurred while fetching token metadata")
+
+def generate_alert_message(trades):
+    """Generate alert messages based on token metrics."""
+    if not trades:
+        return None
+    
+    # Initialize alert message
+    alert_message = "*🔄 Recent Trading Activity*\n\n"
+    
+    for trade in trades:
+        timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
+        amount = trade.get("amount", 0)
+        
+        alert_message += (
+            f"*Trade at {timestamp.strftime('%Y-%m-%d %H:%M:%S')}*\n"
+            f"💰 Amount: {amount:,.2f} EGG\n"
+            f"📤 From: `{trade.get('from', 'Unknown')}`\n"
+            f"📥 To: `{trade.get('to', 'Unknown')}`\n"
+            f"🔗 [View Transaction](https://solscan.io/tx/{trade.get('signature', '')})\n\n"
+        )
+    
+    if not trades:
+        alert_message += "No recent trades found in the last hour."
+    
+    return alert_message
 
 ### Bot Main Function ###
 def main():
