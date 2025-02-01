@@ -27,9 +27,6 @@ wheels/
 .venv/
 venv/
 
-# Local testing files
-test_*.py
-
 # IDE
 .idea/
 .vscode/
