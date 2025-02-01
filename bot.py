@@ -132,27 +132,42 @@ def generate_alert_message(pair):
 ### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Telegram command to fetch token price and transaction data."""
-    user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    try:
+        chat_id = update.message.chat_id
+        token_address = context.application.user_data.get(chat_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+        
+        print(f"\n--- Fetching data for user {chat_id} ---")
+        print(f"Token address: {token_address}")
+        
+        # Get token price data
+        pair = fetch_token_data(token_address)
+        if not pair:
+            await update.message.reply_text("❌ Failed to fetch token data")
+            return
 
-    pair = fetch_token_data(token_address)
-    if not pair:
-        await update.message.reply_text("❌ Failed to fetch token data")
-        return
-
-    message = generate_alert_message(pair)
-    
-    # Add recent trades info if available
-    trades = await fetch_recent_trades(token_address)
-    if trades:
-        message += "\n\n*Recent Trades:*\n"
-        for trade in trades[:3]:  # Show last 3 trades
-            timestamp = datetime.fromtimestamp(trade.get("blockTime", 0)/1000).strftime("%Y-%m-%d %H:%M:%S")
-            trade_type = trade.get("type", "UNKNOWN")
-            amount = trade.get("amount", 0)
-            message += f"• {timestamp}: {trade_type} - Amount: {amount:,.0f}\n"
-    
-    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+        # Generate price alert message
+        price_message = generate_alert_message(pair)
+        
+        # Get recent trades
+        trades = await fetch_recent_trades(token_address)
+        
+        # Generate trade alert message
+        trade_message = "\n\n" + generate_trade_alert_message(trades)
+        
+        # Combine messages
+        full_message = price_message + trade_message
+        
+        await update.message.reply_text(
+            text=escape_md(full_message),
+            parse_mode='MarkdownV2',
+            disable_web_page_preview=True
+        )
+        
+    except Exception as e:
+        print(f"Error in alert command: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ An error occurred while fetching data. Please try again later."
+        )
 
 ### Telegram Command: Fetch Token Price ###
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,31 +274,48 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
 ### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Background job to check alerts for subscribed users."""
-    for user_id in [user_id for user_id in context.application.user_data.keys() if 'subscribed' in context.application.user_data[user_id]]:
-        try:
-            token_address = context.application.user_data[user_id].get('token_address', DEFAULT_TOKEN_ADDRESS)
-            pair = fetch_token_data(token_address)
+    try:
+        print("\n--- Running scheduled alert check ---")
+        
+        # Get subscribed users
+        subscribed_users = context.application.user_data.get('subscribed_users', [])
+        if not subscribed_users:
+            print("No subscribed users")
+            return
             
-            if pair:
-                message = generate_alert_message(pair)
-                
-                # Add recent trades info
-                trades = await fetch_recent_trades(token_address)
-                if trades:
-                    message += "\n\n*Recent Trades:*\n"
-                    for trade in trades[:3]:
-                        timestamp = datetime.fromtimestamp(trade.get("blockTime", 0)/1000).strftime("%Y-%m-%d %H:%M:%S")
-                        trade_type = trade.get("type", "UNKNOWN")
-                        amount = trade.get("amount", 0)
-                        message += f"• {timestamp}: {trade_type} - Amount: {amount:,.0f}\n"
-                
+        print(f"Found {len(subscribed_users)} subscribed users")
+        
+        # Get token data
+        pair = fetch_token_data(DEFAULT_TOKEN_ADDRESS)
+        if not pair:
+            print("Failed to fetch token data")
+            return
+            
+        # Generate alert message
+        price_message = generate_alert_message(pair)
+        
+        # Get recent trades
+        trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
+        trade_message = "\n\n" + generate_trade_alert_message(trades)
+        
+        # Combine messages
+        full_message = price_message + trade_message
+        
+        # Send alerts to all subscribed users
+        for user_id in subscribed_users:
+            try:
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=escape_md(message),
-                    parse_mode="MarkdownV2"
+                    text=escape_md(full_message),
+                    parse_mode='MarkdownV2',
+                    disable_web_page_preview=True
                 )
-        except Exception as e:
-            print(f"Error sending alert to user {user_id}: {str(e)}")
+                print(f"Sent alert to user {user_id}")
+            except Exception as e:
+                print(f"Failed to send alert to user {user_id}: {str(e)}")
+                
+    except Exception as e:
+        print(f"Error in check_alerts: {str(e)}")
 
 ### Helius API Functions ###
 
@@ -350,47 +382,37 @@ def fetch_token_holders(token_address, limit=20):
 async def fetch_recent_trades(token_address, limit=10):
     """Enhanced recent trades fetch with DAS API integration."""
     try:
-        url = "https://api.helius.xyz/v0/addresses/" + token_address + "/transactions"
+        print(f"Fetching trades for {token_address}")
         
-        # Use simpler parameters
+        # Construct API URL
+        url = f"{HELIUS_API_URL}/addresses/{token_address}/transactions"
+        
+        # Set up parameters
         params = {
             "api-key": HELIUS_API_KEY,
             "type": "SWAP",  # Only get swap transactions
+            "limit": limit
         }
         
+        # Make API request
         response = requests.get(url, params=params)
         
-        if response.status_code == 200:
-            data = response.json()
-            trades = []
+        if response.status_code != 200:
+            print(f"Error fetching trades: {response.status_code}")
+            print(f"Response: {response.text}")
+            return None
             
-            # Process only up to limit transactions
-            for tx in data[:limit]:
-                # Extract basic transaction info
-                trade_info = {
-                    "signature": tx.get("signature", "Unknown"),
-                    "timestamp": tx.get("timestamp", 0),
-                    "type": "SWAP"
-                }
-                
-                # Try to extract token amounts from the transaction
-                if "tokenTransfers" in tx:
-                    for transfer in tx.get("tokenTransfers", []):
-                        if transfer.get("mint") == token_address:
-                            trade_info["amount"] = float(transfer.get("tokenAmount", 0)) / (10 ** 6)  # Convert to EGG
-                            trade_info["from"] = transfer.get("fromUserAccount", "Unknown")
-                            trade_info["to"] = transfer.get("toUserAccount", "Unknown")
-                            trades.append(trade_info)
-                            break
-            
-            return trades if trades else None  # Return None if no trades found
+        trades = response.json()
         
-        print(f"Error response from Helius API: {response.status_code}")
-        print(response.text)
-        return None
+        if not trades:
+            print("No trades found")
+            return None
+            
+        print(f"Found {len(trades)} trades")
+        return trades
         
     except Exception as e:
-        print(f"Error fetching recent trades: {str(e)}")
+        print(f"Error fetching trades: {str(e)}")
         return None
 
 def fetch_transaction_details(signature):
@@ -417,34 +439,28 @@ def fetch_transaction_details(signature):
         print(f"Error fetching transaction details: {str(e)}")
         return None
 
-def fetch_liquidity_changes(token_address):
+async def fetch_liquidity_changes(token_address):
     """Enhanced liquidity tracking with detailed pool information."""
     try:
-        # First get token metadata
-        metadata = fetch_token_metadata(token_address)
-        if not metadata:
-            return None
-
         # Get recent transactions
-        trades = await fetch_recent_trades(token_address, 50)
+        trades = await fetch_recent_trades(token_address, 50)  # Get more trades for better liquidity tracking
         if not trades:
             return None
-
-        liquidity_events = []
+            
+        # Track liquidity changes
+        liquidity_changes = []
+        
         for trade in trades:
-            if trade["type"] in ["ADD_LIQUIDITY", "REMOVE_LIQUIDITY", "SWAP"]:
-                tx_details = fetch_transaction_details(trade["signature"])
-                if tx_details:
-                    event = {
-                        "timestamp": trade["blockTime"],
-                        "type": trade["type"],
-                        "signature": trade["signature"],
-                        "changes": tx_details.get("tokenTransfers", []),
-                        "success": trade["success"]
-                    }
-                    liquidity_events.append(event)
-
-        return liquidity_events
+            # Look for liquidity-related transactions
+            if "description" in trade and ("liquidity" in trade["description"].lower() or "pool" in trade["description"].lower()):
+                liquidity_changes.append({
+                    "timestamp": trade.get("timestamp", 0),
+                    "description": trade.get("description", "Unknown"),
+                    "signature": trade.get("signature", "Unknown")
+                })
+                
+        return liquidity_changes if liquidity_changes else None
+        
     except Exception as e:
         print(f"Error fetching liquidity changes: {str(e)}")
         return None
@@ -508,7 +524,7 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     
-    liquidity_data = fetch_liquidity_changes(token_address)
+    liquidity_data = await fetch_liquidity_changes(token_address)
     if not liquidity_data:
         await update.message.reply_text(escape_md("⚠️ Could not fetch liquidity data."), parse_mode="MarkdownV2")
         return
@@ -565,36 +581,29 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in metadata command: {str(e)}")
         await update.message.reply_text("❌ An error occurred while fetching token metadata")
 
-def generate_alert_message(trades):
+def generate_trade_alert_message(trades):
     """Generate alert message from trade data."""
     if not trades:
         return "⚠️ Could not fetch trade data. This might be due to API rate limits or the token not being actively traded."
     
     message = "🔔 *Recent EGG Token Activity*\n\n"
     
-    for trade in trades:
+    for trade in trades[:5]:  # Show last 5 trades
         try:
             # Extract trade info safely
             timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
-            amount = trade.get("amount", 0)
-            from_addr = trade.get("from", "Unknown")[:8]
-            to_addr = trade.get("to", "Unknown")[:8]
-            sig = trade.get("signature", "Unknown")
+            description = trade.get("description", "Unknown Trade")
+            sig = trade.get("signature", "Unknown")[:8]
             
             # Format trade info
-            message += f"*Time:* {timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-            message += f"*Amount:* {amount:,.2f} EGG\n"
-            message += f"*From:* `{from_addr}...`\n"
-            message += f"*To:* `{to_addr}...`\n"
-            message += f"*TX:* [View on Explorer](https://solscan.io/tx/{sig})\n\n"
+            message += f"• {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            message += f"  {description}\n"
+            message += f"  Signature: {sig}...\n\n"
             
         except Exception as e:
             print(f"Error formatting trade: {e}")
             continue
     
-    if message == "🔔 *Recent EGG Token Activity*\n\n":
-        return "⚠️ No recent trades found for EGG token."
-        
     return message
 
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -608,7 +617,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
         
         # Generate and send message
-        message = generate_alert_message(trades)
+        message = generate_trade_alert_message(trades)
         await update.message.reply_text(
             text=message,
             parse_mode='Markdown',
@@ -649,6 +658,13 @@ def main():
         application.add_handler(CommandHandler("alert", alert_command))
         application.add_handler(CommandHandler("trades", trades_command))
         application.add_handler(CommandHandler("metadata", metadata_command))
+        application.add_handler(CommandHandler("price", price_command))
+        application.add_handler(CommandHandler("ping", ping_command))
+        application.add_handler(CommandHandler("change", change_command))
+        application.add_handler(CommandHandler("holders", holders_command))
+        application.add_handler(CommandHandler("liquidity", liquidity_command))
+        application.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
+        application.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
 
         # Add error handler
         application.add_error_handler(error_handler)
