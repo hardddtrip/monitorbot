@@ -16,6 +16,18 @@ from telegram.ext import (
 import logging
 import base58
 
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+# Reduce httpx logging verbosity
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 # Note: In production, these environment variables are configured on Heroku
 # Required environment variables:
@@ -1246,5 +1258,4 @@ def error_handler(update: Update, context: CallbackContext) -> None:
         print(f"Error in error handler: {e}")
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     main()
