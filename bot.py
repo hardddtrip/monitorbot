@@ -913,188 +913,134 @@ def analyze_recent_transactions(token_address, minutes=15):
         # Fetch transactions using Helius DAS API for better transaction parsing
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
         if not HELIUS_API_KEY:
+            print("Missing HELIUS_API_KEY")
             return None
             
-        url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
-        response = requests.get(url)
+        # Use Helius Enhanced Transaction History API
+        url = f"https://api.helius.xyz/v0/token-transactions?api-key={HELIUS_API_KEY}"
+        payload = {
+            "query": {
+                "accounts": [token_address],
+                "startTime": cutoff_time,
+                "endTime": current_time
+            }
+        }
+        response = requests.post(url, json=payload)
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
         transactions = response.json()
+        if not transactions:
+            print("No transactions found")
+            return {
+                "transaction_count": 0,
+                "active_wallets": 0,
+                "trading_velocity": 0,
+                "patterns": {
+                    "swaps": 0,
+                    "rapid_swaps": 0,
+                    "bot_trades": 0,
+                    "wash_trades": 0,
+                    "sandwich_attacks": 0,
+                    "flash_loans": 0,
+                    "high_slippage": 0,
+                    "arbitrage": 0,
+                    "failed": 0
+                },
+                "risk_metrics": {
+                    "bot_activity": 0,
+                    "wash_trading": 0,
+                    "failed_tx_ratio": 0,
+                    "large_trade_ratio": 0
+                }
+            }
         
         # Filter and analyze transactions
-        recent_txs = []
-        wallets = {}
-        wallet_pairs = {}  # Track wallet interactions
+        wallets = set()
+        wallet_last_trade = {}  # Last trade time per wallet
+        wallet_trade_counts = {}  # Number of trades per wallet
         patterns = {
             "swaps": 0,
-            "transfers": 0,
-            "large_transfers": 0,  # Transfers > $1000
-            "multi_transfers": 0,   # Multiple token transfers in one tx
-            "failed": 0,
-            "rapid_swaps": 0,      # Multiple swaps within 1 minute
-            "wash_trades": 0,      # Same wallet buying and selling quickly
-            "sandwich_attacks": 0,  # Buy before and sell after a large trade
-            "flash_loans": 0,      # Borrow and repay in same block
-            "high_slippage": 0,    # Trades with >5% slippage
-            "arbitrage": 0,        # Multiple DEX interactions in one tx
-            "bot_trades": 0        # Very fast trades or perfect timing
+            "rapid_swaps": 0,
+            "bot_trades": 0,
+            "wash_trades": 0,
+            "sandwich_attacks": 0,
+            "flash_loans": 0,
+            "high_slippage": 0,
+            "arbitrage": 0,
+            "failed": 0
         }
-        unusual_activity = []
         
-        # Track time-based patterns
-        wallet_last_trade = {}  # Last trade time per wallet
-        wallet_trade_direction = {}  # Buy/Sell direction per wallet
         large_trades = []  # Track large trades for sandwich detection
         
         for tx in transactions:
-            timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
-            if timestamp < cutoff_time:
-                continue
-                
-            tx_type = tx.get("type", "UNKNOWN")
-            description = tx.get("description", "")
-            source_wallet = tx.get("sourceAddress", "")
-            destination_wallet = tx.get("destinationAddress", "")
-            fee = tx.get("fee", 0)
-            amount_usd = tx.get("amount", {}).get("usd", 0)
+            # Extract transaction details
+            source = tx.get('sourceAddress', '')
+            instructions = tx.get('instructions', [])
+            timestamp = tx.get('timestamp', 0)
+            signatures = tx.get('signatures', [])
             
-            # Track wallet interactions
-            if source_wallet:
-                wallets[source_wallet] = wallets.get(source_wallet, 0) + 1
-                
-            # Track wallet pairs
-            if source_wallet and destination_wallet:
-                pair_key = f"{min(source_wallet, destination_wallet)}:{max(source_wallet, destination_wallet)}"
-                wallet_pairs[pair_key] = wallet_pairs.get(pair_key, 0) + 1
+            if source:
+                wallets.add(source)
             
-            # Analyze transaction type and details
-            if "swap" in tx_type.lower():
-                patterns["swaps"] += 1
+            # Track wallet trading patterns
+            if source in wallet_last_trade:
+                time_since_last = timestamp - wallet_last_trade[source]
+                if time_since_last < 60:  # Within 1 minute
+                    patterns["rapid_swaps"] += 1
+                    if time_since_last < 3:  # Within 3 seconds
+                        patterns["bot_trades"] += 1
+            
+            wallet_last_trade[source] = timestamp
+            wallet_trade_counts[source] = wallet_trade_counts.get(source, 0) + 1
+            
+            # Analyze transaction type
+            for inst in instructions:
+                program = inst.get('programId', '')
+                if program in ['9qvG1zUp8xF1Bi4m6UdRNby1BAAuaDrUxSpv4CmRRMjL']:  # Jupiter/Raydium
+                    patterns["swaps"] += 1
+                    
+                    # Check for high slippage
+                    if inst.get('slippage', 0) > 5:
+                        patterns["high_slippage"] += 1
+                        
+                    # Check for arbitrage (multiple DEX interactions)
+                    if len([i for i in instructions if i.get('programId') in ['9qvG1zUp8xF1Bi4m6UdRNby1BAAuaDrUxSpv4CmRRMjL']]) > 1:
+                        patterns["arbitrage"] += 1
                 
-                # Check for rapid swaps
-                if source_wallet in wallet_last_trade:
-                    time_since_last = timestamp - wallet_last_trade[source_wallet]
-                    if time_since_last < 60:  # Within 1 minute
-                        patterns["rapid_swaps"] += 1
-                        if time_since_last < 3:  # Within 3 seconds
-                            patterns["bot_trades"] += 1
-                
-                # Check for wash trading
-                if source_wallet in wallet_trade_direction:
-                    if wallet_trade_direction[source_wallet] != tx_type:
-                        time_since_last = timestamp - wallet_last_trade[source_wallet]
-                        if time_since_last < 300:  # Within 5 minutes
-                            patterns["wash_trades"] += 1
-                            
-                # Check for high slippage
-                slippage = tx.get("slippage", 0)
-                if slippage > 5:
-                    patterns["high_slippage"] += 1
-                    
-                # Track for sandwich attack detection
-                if amount_usd > 5000:  # Large trades
-                    large_trades.append({
-                        "timestamp": timestamp,
-                        "type": tx_type,
-                        "amount": amount_usd
-                    })
-                    
-                # Check for arbitrage
-                dex_interactions = tx.get("dexInteractions", [])
-                if len(dex_interactions) > 1:
-                    patterns["arbitrage"] += 1
-                
-                wallet_last_trade[source_wallet] = timestamp
-                wallet_trade_direction[source_wallet] = tx_type
-                
-                # Check for unusual swap amounts
-                if amount_usd > 10000:  # Swaps over $10k
-                    unusual_activity.append({
-                        "type": "Large Swap",
-                        "amount": f"${amount_usd:,.2f}",
-                        "wallet": source_wallet,
-                        "timestamp": timestamp
-                    })
-                    
-            elif "transfer" in tx_type.lower():
-                patterns["transfers"] += 1
-                
-                if amount_usd > 1000:
-                    patterns["large_transfers"] += 1
-                    
-                # Check for multi-token transfers
-                token_transfers = tx.get("tokenTransfers", [])
-                if len(token_transfers) > 1:
-                    patterns["multi_transfers"] += 1
-                    
-                # Check for flash loans
-                if source_wallet == destination_wallet and amount_usd > 10000:
-                    patterns["flash_loans"] += 1
-                    
-            if not tx.get("successful", True):
+                if program in ['LendZqTs7gn5CTSJU1jWKhKuVpjJGom45nnwPb2AMTi']:  # Lending protocols
+                    if any('flash' in str(inst.get('data', '')).lower() for inst in instructions):
+                        patterns["flash_loans"] += 1
+            
+            # Check for failed transactions
+            if tx.get('successful') is False:
                 patterns["failed"] += 1
-                
-            # Track high-fee transactions
-            if fee > 10000:  # More than 0.00001 SOL
-                unusual_activity.append({
-                    "type": "High Fee",
-                    "fee": f"{fee/1000000000:.6f} SOL",
-                    "wallet": source_wallet,
-                    "timestamp": timestamp
-                })
-                
-            # Check for sandwich attacks
-            if len(large_trades) >= 3:
-                for i in range(len(large_trades) - 2):
-                    if (large_trades[i+1]["timestamp"] - large_trades[i]["timestamp"] < 60 and
-                        large_trades[i+2]["timestamp"] - large_trades[i+1]["timestamp"] < 60):
-                        if (large_trades[i]["type"] == "buy" and
-                            large_trades[i+2]["type"] == "sell" and
-                            large_trades[i+1]["amount"] > large_trades[i]["amount"] * 2):
-                            patterns["sandwich_attacks"] += 1
-                
-            recent_txs.append({
-                "type": tx_type,
-                "description": description,
-                "wallet": source_wallet,
-                "destination": destination_wallet,
-                "amount_usd": amount_usd,
-                "timestamp": timestamp,
-                "successful": tx.get("successful", True)
-            })
-            
-        # Find suspicious wallet patterns
-        suspicious_wallets = {
-            wallet: count for wallet, count in wallets.items()
-            if count >= 5  # Wallets with 5+ transactions in 15 min
-        }
         
-        # Find frequent wallet pairs (potential wash trading)
-        suspicious_pairs = {
-            pair: count for pair, count in wallet_pairs.items()
-            if count >= 3  # Wallet pairs with 3+ interactions in 15 min
-        }
+        # Calculate trading velocity (tx/min)
+        trading_velocity = len(transactions) / minutes if minutes > 0 else 0
         
-        # Calculate trading velocity
-        trading_velocity = len(recent_txs) / minutes if minutes > 0 else 0
+        # Calculate risk metrics
+        total_trades = len(transactions)
+        if total_trades > 0:
+            bot_activity = (patterns["bot_trades"] / total_trades) * 100
+            wash_trading = (patterns["wash_trades"] / total_trades) * 100
+            failed_tx_ratio = (patterns["failed"] / total_trades) * 100
+            large_trade_ratio = (len(large_trades) / total_trades) * 100
+        else:
+            bot_activity = wash_trading = failed_tx_ratio = large_trade_ratio = 0
         
         return {
-            "transaction_count": len(recent_txs),
-            "patterns": patterns,
+            "transaction_count": total_trades,
             "active_wallets": len(wallets),
-            "suspicious_wallets": suspicious_wallets,
-            "suspicious_pairs": suspicious_pairs,
-            "unusual_activity": unusual_activity,
-            "recent_transactions": recent_txs,
-            "trading_velocity": trading_velocity,  # Transactions per minute
-            "pattern_summary": {
-                "bot_activity": patterns["bot_trades"] / patterns["swaps"] if patterns["swaps"] > 0 else 0,
-                "wash_trading": patterns["wash_trades"] / len(recent_txs) if recent_txs else 0,
-                "failed_ratio": patterns["failed"] / len(recent_txs) if recent_txs else 0,
-                "large_trade_ratio": (patterns["large_transfers"] + patterns["flash_loans"]) / len(recent_txs) if recent_txs else 0
+            "trading_velocity": round(trading_velocity, 2),
+            "patterns": patterns,
+            "risk_metrics": {
+                "bot_activity": round(bot_activity, 1),
+                "wash_trading": round(wash_trading, 1),
+                "failed_tx_ratio": round(failed_tx_ratio, 1),
+                "large_trade_ratio": round(large_trade_ratio, 1)
             }
         }
         
@@ -1141,16 +1087,16 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message += f"• Failed Transactions: {patterns['failed']}\n\n"
     
     message += f"*Risk Metrics*:\n"
-    summary = analysis['pattern_summary']
-    message += f"• Bot Activity: {summary['bot_activity']*100:.1f}%\n"
-    message += f"• Wash Trading: {summary['wash_trading']*100:.1f}%\n"
-    message += f"• Failed Tx Ratio: {summary['failed_ratio']*100:.1f}%\n"
-    message += f"• Large Trade Ratio: {summary['large_trade_ratio']*100:.1f}%\n\n"
+    summary = analysis['risk_metrics']
+    message += f"• Bot Activity: {summary['bot_activity']}%\n"
+    message += f"• Wash Trading: {summary['wash_trading']}%\n"
+    message += f"• Failed Tx Ratio: {summary['failed_tx_ratio']}%\n"
+    message += f"• Large Trade Ratio: {summary['large_trade_ratio']}%\n\n"
     
     if analysis['suspicious_wallets']:
         message += f"*Suspicious Wallets*:\n"
         for wallet, count in list(analysis['suspicious_wallets'].items())[:5]:  # Show top 5
-            message += f"• `{wallet[:8]}...{wallet[-4:]}`: {count} txs\n"
+            message += f"• `{wallet[:8]}...`: {count} txs\n"
         message += "\n"
         
     if analysis['suspicious_pairs']:
