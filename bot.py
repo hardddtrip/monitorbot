@@ -99,37 +99,28 @@ def fetch_token_data(token_address):
 ### Generate Alert Message ###
 def generate_alert_message(pair):
     """Generate alert messages based on token metrics."""
-
     if not pair:
-        return "⚠️ No trading data found for this token."
+        return None
 
-    price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
-    liquidity = float(pair["liquidity"]["usd"])
-    market_cap = pair.get("marketCap", "N/A")
-    dex_url = pair["url"]
-    price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))  # 5-minute change
-    
-    # Calculate approximate 15-minute change using 5-minute data
-    price_change_15m = price_change_5m * 3
+    price = float(pair.get("priceUsd", 0))
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))
+    volume_24h = float(pair.get("volume", {}).get("h24", 0))
+    liquidity_usd = float(pair.get("liquidity", {}).get("usd", 0))
 
-    message = f"💰 *Price Update*\n"
-    message += f"Current Price: ${price_usd:.6f}\n"
-    message += f"15min Change: {price_change_15m:+.2f}%\n"
-    message += f"1h Change: {price_change_1h:+.2f}%\n"
-    message += f"24h Volume: ${volume_24h:,.2f}\n"
-    message += f"Liquidity: ${liquidity:,.2f}\n"
+    # Only alert if there's significant price movement in 5 minutes
+    if abs(price_change_5m) < 1.0:  # Less than 1% change
+        return None
 
-    # Add alerts based on conditions
-    if abs(price_change_15m) > 10:  # More than 10% change in 15 minutes
-        message += "\n🚨 *Significant Price Movement!*"
-    if price_change_15m > 5:  # More than 5% increase
-        message += "\n📈 *Upward Trend*"
-    elif price_change_15m < -5:  # More than 5% decrease
-        message += "\n📉 *Downward Trend*"
-
+    trend = "🟢" if price_change_5m > 0 else "🔴"
+    message = (
+        f"{trend} *Price Alert*\n\n"
+        f"💵 Price: ${price:.6f}\n"
+        f"📊 5m Change: {price_change_5m:+.2f}%\n"
+        f"💧 Liquidity: ${liquidity_usd:,.0f}\n"
+        f"📈 24h Volume: ${volume_24h:,.0f}"
+    )
     return message
+
 
 ### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
