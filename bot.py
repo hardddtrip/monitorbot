@@ -14,6 +14,7 @@ from telegram.ext import (
     ContextTypes
 )
 import logging
+import base58
 
 # Load environment variables
 # Note: In production, these environment variables are configured on Heroku
@@ -406,61 +407,69 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Fetch token metadata using Helius RPC API"""
+    """Fetch token metadata prioritizing DexScreener data"""
     try:
+        # Get token data from DexScreener
+        url = f"https://api.dexscreener.com/tokens/v1/solana/{token_address}"
+        response = requests.get(url)
+        
+        if response.status_code != 200:
+            print(f"Error response from DexScreener: {response.text}")
+            return None
+            
+        pairs = response.json()
+        if not pairs:
+            print(f"No pairs found for token")
+            return None
+            
+        # Get the pair with highest liquidity
+        pair = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0)) if x.get("liquidity", {}).get("usd") else 0)
+        
+        # Get base token info
+        base_token = pair.get("baseToken", {})
+        quote_token = pair.get("quoteToken", {})
+        
+        # Determine if our token is base or quote
+        token_info = base_token if base_token.get("address").lower() == token_address.lower() else quote_token
+        
+        # Get holder count from Helius as backup
+        holder_count = 0
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
-        if not HELIUS_API_KEY:
-            return None
-
-        url = f"https://api.helius.xyz/v0/rpc?api-key={HELIUS_API_KEY}"
-        
-        # First get account info
-        payload = {
-            "jsonrpc": "2.0",
-            "id": "my-id",
-            "method": "getTokenInfo",
-            "params": [token_address]
-        }
-        
-        response = requests.post(url, json=payload)
-        if response.status_code != 200:
-            return None
+        if HELIUS_API_KEY:
+            url = f"https://api.helius.xyz/v0/addresses/{token_address}/balances?api-key={HELIUS_API_KEY}"
+            response = requests.get(url)
+            holder_count = response.json().get("numHolders", 0) if response.status_code == 200 else 0
             
-        data = response.json()
-        if "result" not in data:
-            return None
-            
-        result = data["result"]
+        # Get additional metadata from Helius as backup
+        metadata = {}
+        if HELIUS_API_KEY:
+            url = f"https://api.helius.xyz/v0/token-metadata?api-key={HELIUS_API_KEY}"
+            payload = {"mintAccounts": [token_address]}
+            response = requests.post(url, json=payload)
+            if response.status_code == 200:
+                metadata = response.json()[0] if response.json() else {}
         
-        # Then get mint info
-        payload = {
-            "jsonrpc": "2.0",
-            "id": "my-id",
-            "method": "getTokenMetadata",
-            "params": [token_address]
-        }
-        
-        response = requests.post(url, json=payload)
-        if response.status_code != 200:
-            return None
-            
-        data = response.json()
-        if "result" not in data:
-            return None
-            
-        metadata = data["result"]
-        
+        # Combine data from both sources
         return {
-            "name": metadata.get("name"),
-            "symbol": metadata.get("symbol"),
+            "name": token_info.get("name"),
+            "symbol": token_info.get("symbol"),
             "decimals": metadata.get("decimals"),
-            "supply": result.get("supply"),
-            "mintAuthority": result.get("mintAuthority"),
-            "freezeAuthority": result.get("freezeAuthority"),
-            "holder_count": result.get("holderCount")
+            "supply": metadata.get("supply"),
+            "mintAuthority": metadata.get("mintAuthority"),
+            "freezeAuthority": metadata.get("freezeAuthority"),
+            "holder_count": holder_count,
+            "token_standard": "SPL",
+            "creators": metadata.get("creators", []),
+            "royalties": metadata.get("sellerFeeBasisPoints", 0) / 100 if metadata.get("sellerFeeBasisPoints") else 0,
+            "collection": metadata.get("collection", {}).get("name"),
+            "description": metadata.get("description"),
+            "image": pair.get("info", {}).get("imageUrl"),
+            "attributes": metadata.get("attributes", []),
+            "external_url": next((w.get("url") for w in pair.get("info", {}).get("websites", []) if w.get("url")), None)
         }
         
     except Exception as e:
+        print(f"Error fetching token metadata: {str(e)}")
         return None
 
 def fetch_token_holders(token_address, limit=20):
