@@ -89,26 +89,40 @@ def generate_alert_message(pair):
     if not pair or "priceUsd" not in pair:
         return None
 
+    # Extract all metrics
     price_usd = float(pair["priceUsd"])
     volume_24h = float(pair["volume"]["h24"])
+    volume_1h = float(pair["volume"].get("h1", 0))
     liquidity = float(pair["liquidity"]["usd"])
+    liquidity_change_24h = float(pair["liquidity"].get("h24", 0))
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    buys_1h = int(pair["txns"]["h1"]["buys"])
+    sells_1h = int(pair["txns"]["h1"]["sells"])
+
+    # Calculate average transaction sizes
+    avg_buy_size = volume_1h / buys_1h if buys_1h > 0 else 0
+    avg_sell_size = volume_1h / sells_1h if sells_1h > 0 else 0
 
     # Pump alert: Price increased by more than 20% in 1h
     if price_change_1h > 20:
         return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-    # Retail arrival: High number of buys but low volume
-    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        return "🛍 *Retail Arrival Detected!*"
-    # Market maker: High liquidity and volume
-    elif liquidity > 2000000 and volume_24h > 5000000:
-        return "🔄 *Market Maker Transfer!* 📊"
+    
+    # Retail arrival: Many small buys (high count, small avg size)
+    elif buys_1h > 500 and avg_buy_size < 100:  # More than 500 buys averaging less than $100 each
+        return "🛍 *Retail Arrival Detected!*\nMany small buys incoming!"
+    
+    # Market maker: Large liquidity changes and balanced trading
+    elif abs(liquidity_change_24h) > 1000000 and 0.8 < (buys_1h / sells_1h) < 1.2:
+        return "🔄 *Market Maker Transfer!* 📊\nLarge liquidity movement detected!"
+    
     # Dump alert: Price decreased by more than 20% in 1h
     elif price_change_1h < -20:
-        return "⚠️ *Dump Alert!* 💥"
-    # Capitulation: High number of sells with low volume
-    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        return "💀 *Retail Capitulation!* 🏳️"
+        return "⚠️ *Dump Alert!* 💥\nSignificant price drop detected!"
+    
+    # Capitulation: Many small sells (high count, small avg size)
+    elif sells_1h > 1000 and avg_sell_size < 100:  # More than 1000 sells averaging less than $100 each
+        return "💀 *Retail Capitulation!* 🏳️\nMass small sells detected!"
+    
     return None
 
 ### Telegram Command: Fetch Alerts ###
