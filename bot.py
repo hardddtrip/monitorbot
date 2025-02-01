@@ -13,8 +13,14 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes
 )
+import logging
 
 # Load environment variables
+# Note: In production, these environment variables are configured on Heroku
+# Required environment variables:
+# - TELEGRAM_BOT_TOKEN: The bot token from BotFather
+# - HELIUS_API_KEY: API key for Helius API
+# For local development, create a .env file with these variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 HELIUS_API_URL = "https://api.helius.xyz/v0"
@@ -23,9 +29,17 @@ HELIUS_API_URL = "https://api.helius.xyz/v0"
 DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"
 
 if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
+    raise ValueError(
+        "TELEGRAM_BOT_TOKEN is missing! "
+        "This token should be configured in your Heroku environment variables. "
+        "For local development, you can set it in a .env file."
+    )
 if not HELIUS_API_KEY:
-    raise ValueError("HELIUS_API_KEY is missing! Set it in your environment variables.")
+    raise ValueError(
+        "HELIUS_API_KEY is missing! "
+        "This token should be configured in your Heroku environment variables. "
+        "For local development, you can set it in a .env file."
+    )
 
 # Helius API endpoints
 HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
@@ -618,17 +632,18 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Analyze the health and risk factors of a token"""
-    token_address = DEFAULT_TOKEN_ADDRESS
-    if context.args and len(context.args) > 0:
-        token_address = context.args[0]
-
-    pair = fetch_token_data(token_address)
-    
-    if not pair:
-        await update.message.reply_text("❌ Failed to fetch token data")
-        return
-
     try:
+        token_address = DEFAULT_TOKEN_ADDRESS
+        if context.args and len(context.args) > 0:
+            token_address = context.args[0]
+
+        logging.info(f"Fetching audit data for token: {token_address}")
+        pair = fetch_token_data(token_address)
+        
+        if not pair:
+            await update.message.reply_text("❌ Failed to fetch token data")
+            return
+
         # Extract basic metrics
         price_usd = float(pair["priceUsd"])
         volume_24h = float(pair["volume"]["h24"])
@@ -636,6 +651,8 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         liquidity = float(pair["liquidity"]["usd"])
         market_cap = float(pair.get("marketCap", 0))
         fdv = float(pair.get("fdv", 0))
+        
+        logging.info(f"Basic metrics extracted - Price: ${price_usd}, Volume 24h: ${volume_24h}, Liquidity: ${liquidity}")
         
         # Price metrics
         price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
@@ -655,6 +672,8 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buys_24h = int(txns_24h.get("buys", 0))
         sells_24h = int(txns_24h.get("sells", 0))
         
+        logging.info(f"Transaction metrics extracted - Buys 24h: {buys_24h}, Sells 24h: {sells_24h}")
+        
         # Calculate derived metrics
         avg_buy_size_1h = volume_1h / buys_1h if buys_1h > 0 else 0
         avg_sell_size_1h = volume_1h / sells_1h if sells_1h > 0 else 0
@@ -666,17 +685,17 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Risk assessment
         risk_factors = []
         if liquidity < 50000:
-            risk_factors.append("⚠️ Low liquidity \\(<$50k\\)")
+            risk_factors.append("⚠️ Low liquidity (<$50k)")
         if liquidity_to_mcap < 5:
-            risk_factors.append("⚠️ Low liquidity/mcap ratio \\(<5%\\)")
+            risk_factors.append("⚠️ Low liquidity/mcap ratio (<5%)")
         if volume_to_mcap < 1:
-            risk_factors.append("⚠️ Low volume/mcap ratio \\(<1%\\)")
+            risk_factors.append("⚠️ Low volume/mcap ratio (<1%)")
         if abs(price_change_24h) > 50:
-            risk_factors.append("⚠️ High price volatility \\(>50% in 24h\\)")
+            risk_factors.append("⚠️ High price volatility (>50% in 24h)")
         if liquidity_concentration > 0.3:
             risk_factors.append("⚠️ High liquidity imbalance")
         if market_cap > 0 and fdv / market_cap > 5:
-            risk_factors.append("⚠️ High FDV/MCAP ratio \\(>5x\\)")
+            risk_factors.append("⚠️ High FDV/MCAP ratio (>5x)")
         
         # Health score calculation (0-100)
         health_score = 100
@@ -688,49 +707,55 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         health_score -= 0 if fdv/market_cap < 3 else (15 * (fdv/market_cap/10))  # -15 max
         health_score = max(0, min(100, health_score))  # Clamp between 0-100
         
+        logging.info(f"Health score calculated: {health_score}")
+        
         # Generate health indicator
         health_indicator = "🟢" if health_score >= 80 else "🟡" if health_score >= 50 else "🔴"
         
         # Format audit message
         audit_message = (
-            f"🔍 *Token Audit Report* 🔍\\n\\n"
-            f"*Health Score:* {health_indicator} {health_score:.0f}/100\\n\\n"
+            "🔍 *Token Audit Report* 🔍\n\n"
+            f"*Health Score:* {health_indicator} {health_score:.0f}/100\n\n"
             
-            f"*Price Metrics*\\n"
-            f"• Current Price: ${price_usd:,.6f}\\n"
-            f"• 1h Change: {price_change_1h:+.1f}%\\n"
-            f"• 24h Change: {price_change_24h:+.1f}%\\n"
-            f"• 7d Change: {price_change_7d:+.1f}%\\n\\n"
+            "*Price Metrics*\n"
+            f"• Current Price: ${price_usd:.6f}\n"
+            f"• 1h Change: {price_change_1h:+.1f}%\n"
+            f"• 24h Change: {price_change_24h:+.1f}%\n"
+            f"• 7d Change: {price_change_7d:+.1f}%\n\n"
             
-            f"*Market Metrics*\\n"
-            f"• Market Cap: ${market_cap:,.0f}\\n"
-            f"• FDV: ${fdv:,.0f}\\n"
-            f"• 24h Volume: ${volume_24h:,.0f}\\n"
-            f"• Volume/MCap: {volume_to_mcap:.1f}%\\n\\n"
+            "*Market Metrics*\n"
+            f"• Market Cap: ${market_cap:,.0f}\n"
+            f"• FDV: ${fdv:,.0f}\n"
+            f"• 24h Volume: ${volume_24h:,.0f}\n"
+            f"• Volume/MCap: {volume_to_mcap:.1f}%\n\n"
             
-            f"*Liquidity Metrics*\\n"
-            f"• Total Liquidity: ${liquidity:,.0f}\\n"
-            f"• Liquidity/MCap: {liquidity_to_mcap:.1f}%\\n"
-            f"• 24h Change: ${liquidity_change_24h:+,.0f}\\n"
-            f"• Concentration: {liquidity_concentration:.2f}\\n\\n"
+            "*Liquidity Metrics*\n"
+            f"• Total Liquidity: ${liquidity:,.0f}\n"
+            f"• Liquidity/MCap: {liquidity_to_mcap:.1f}%\n"
+            f"• 24h Change: ${liquidity_change_24h:+,.0f}\n"
+            f"• Concentration: {liquidity_concentration:.2f}\n\n"
             
-            f"*Trading Activity \\(24h\\)*\\n"
-            f"• Buy Transactions: {buys_24h}\\n"
-            f"• Sell Transactions: {sells_24h}\\n"
-            f"• Buy/Sell Ratio: {buy_sell_ratio_24h:.2f}\\n"
-            f"• Avg Buy \\(1h\\): ${avg_buy_size_1h:,.0f}\\n"
-            f"• Avg Sell \\(1h\\): ${avg_sell_size_1h:,.0f}\\n\\n"
+            "*Trading Activity (24h)*\n"
+            f"• Buy Transactions: {buys_24h}\n"
+            f"• Sell Transactions: {sells_24h}\n"
+            f"• Buy/Sell Ratio: {buy_sell_ratio_24h:.2f}\n"
+            f"• Avg Buy (1h): ${avg_buy_size_1h:,.0f}\n"
+            f"• Avg Sell (1h): ${avg_sell_size_1h:,.0f}"
         )
         
         # Add risk factors if any
         if risk_factors:
-            audit_message += "*Risk Factors*\\n" + "\\n".join(risk_factors)
+            audit_message += "\n\n*Risk Factors*\n" + "\n".join(risk_factors)
         
+        # Use the escape_md function to properly escape all special characters
+        audit_message = escape_md(audit_message)
+        
+        logging.info("Sending audit message")
         await update.message.reply_text(audit_message, parse_mode='MarkdownV2')
         
     except Exception as e:
-        logging.error(f"Error in audit command: {str(e)}")
-        await update.message.reply_text("❌ Error analyzing token data")
+        logging.error(f"Error in audit command: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"❌ Error analyzing token data: {str(e)}")
 
 ### Bot Main Function ###
 def main():
@@ -806,4 +831,5 @@ def error_handler(update: Update, context: CallbackContext) -> None:
         print(f"Error in error handler: {e}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     main()
