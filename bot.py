@@ -919,18 +919,29 @@ def analyze_recent_transactions(token_address, minutes=15):
             print("Missing HELIUS_API_KEY")
             return None
             
-        # Use Helius Enhanced Transaction History API
-        url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
+        # Use Helius Enhanced Transactions API
+        url = f"https://api.helius.xyz/v0/token-transactions?api-key={HELIUS_API_KEY}"
         print(f"Fetching transactions from Helius API: {url}")
         
-        response = requests.get(url)
+        payload = {
+            "query": {
+                "accounts": [token_address],
+                "startTime": cutoff_time * 1000,  # Convert to milliseconds
+                "endTime": current_time * 1000,  # Convert to milliseconds
+                "types": ["SWAP", "TRANSFER", "BURN", "MINT"],
+                "limit": 100
+            }
+        }
+        
+        response = requests.post(url, json=payload)
         print(f"API Response Status: {response.status_code}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
-        transactions = response.json()
+        data = response.json()
+        transactions = data.get('items', [])
         print(f"Total transactions returned: {len(transactions)}")
         
         if not transactions:
@@ -982,20 +993,18 @@ def analyze_recent_transactions(token_address, minutes=15):
             print(json.dumps(transactions[0], indent=2))
         
         for tx in transactions:
-            # Skip old transactions
-            timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
-            if timestamp < cutoff_time:
-                continue
-                
             # Extract transaction details
             source = tx.get('sourceAddress', '')
-            instructions = tx.get('instructions', [])
-            amount_usd = tx.get('amount', {}).get('usd', 0)
+            type = tx.get('type', '')
+            description = tx.get('description', '')
+            amount = tx.get('amount', {}).get('usd', 0)
+            timestamp = tx.get('timestamp', 0) / 1000  # Convert to seconds
             
             print(f"\nAnalyzing transaction:")
+            print(f"Type: {type}")
+            print(f"Description: {description}")
             print(f"Source: {source}")
-            print(f"Instructions: {len(instructions)}")
-            print(f"Amount USD: ${amount_usd}")
+            print(f"Amount USD: ${amount}")
             print(f"Timestamp: {timestamp}")
             
             if source:
@@ -1006,14 +1015,16 @@ def analyze_recent_transactions(token_address, minutes=15):
                 time_since_last = timestamp - wallet_last_trade[source]
                 if time_since_last < 60:  # Within 1 minute
                     patterns["rapid_swaps"] += 1
+                    print("Detected rapid swap")
                     if time_since_last < 3:  # Within 3 seconds
                         patterns["bot_trades"] += 1
+                        print("Detected bot trade")
             
             wallet_last_trade[source] = timestamp
             wallet_trade_counts[source] = wallet_trade_counts.get(source, 0) + 1
             
             # Analyze transaction type
-            if any(prog in str(instructions) for prog in ['Jupiter', 'Raydium', 'Orca']):
+            if type == "SWAP":
                 patterns["swaps"] += 1
                 print("Detected swap transaction")
                 
@@ -1022,21 +1033,21 @@ def analyze_recent_transactions(token_address, minutes=15):
                     patterns["high_slippage"] += 1
                     print("Detected high slippage")
                     
-                # Check for arbitrage (multiple DEX interactions)
-                if len([i for i in instructions if any(dex in str(i) for dex in ['Jupiter', 'Raydium', 'Orca'])]) > 1:
+                # Check for arbitrage (multiple swaps in same transaction)
+                if "arbitrage" in description.lower():
                     patterns["arbitrage"] += 1
                     print("Detected arbitrage")
                     
                 # Track for sandwich attack detection
-                if amount_usd > 5000:  # Large trades
+                if amount > 5000:  # Large trades
                     large_trades.append({
                         "timestamp": timestamp,
-                        "amount": amount_usd
+                        "amount": amount
                     })
-                    print(f"Detected large trade: ${amount_usd}")
+                    print(f"Detected large trade: ${amount}")
             
             # Check for flash loans
-            if "flash_loan" in str(instructions).lower() or (source == tx.get('destinationAddress') and amount_usd > 10000):
+            if "flash_loan" in description.lower() or (source == tx.get('destinationAddress') and amount > 10000):
                 patterns["flash_loans"] += 1
                 print("Detected flash loan")
             
