@@ -385,44 +385,66 @@ def fetch_recent_trades(token_address, limit=10):
     """Fetch recent large trades for a token using Helius API."""
     url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
     
+    # First try enhanced transaction history
     payload = {
         "jsonrpc": "2.0",
         "id": "my-id",
-        "method": "getSignaturesForAddress",
-        "params": [
-            token_address,
-            {
-                "limit": limit * 2,  # Fetch more to filter for actual trades
-                "commitment": "confirmed"
-            }
-        ]
+        "method": "searchTransactions",
+        "params": {
+            "commitment": "confirmed",
+            "limit": limit * 2,
+            "order": "desc",
+            "type": "SWAP",
+            "account": token_address
+        }
     }
     
     try:
+        print(f"Fetching trades for token: {token_address}")
         response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        print(f"Helius API Response: {response.status_code}")
+        print(f"Response content: {response.text[:500]}...")  # Print first 500 chars
+        
         if response.status_code == 200:
-            signatures = response.json().get("result", [])
-            if not signatures:
+            result = response.json()
+            if "error" in result:
+                print(f"Helius API Error: {result['error']}")
+                return None
+                
+            transactions = result.get("result", {}).get("items", [])
+            if not transactions:
+                print("No transactions found in response")
                 return None
             
-            # Fetch transaction details for each signature
             trades = []
-            for sig in signatures:
-                trade = fetch_transaction_details(sig["signature"])
-                if trade and is_trade_transaction(trade):
-                    trades.append({
-                        "signature": sig["signature"],
-                        "timestamp": trade["blockTime"],
-                        "amount": extract_trade_amount(trade),
-                        "type": determine_trade_type(trade)
-                    })
+            for tx in transactions:
+                if "tokenTransfers" in tx:
+                    for transfer in tx["tokenTransfers"]:
+                        if transfer.get("mint") == token_address:
+                            trades.append({
+                                "signature": tx["signature"],
+                                "timestamp": tx["timestamp"],
+                                "amount": float(transfer.get("tokenAmount", 0)),
+                                "type": "Buy" if transfer.get("type") == "RECEIVE" else "Sell"
+                            })
+                            break
                     if len(trades) >= limit:
                         break
-            return trades
+            
+            if trades:
+                return trades
+            
+            print("No valid trades found in transactions")
+            return None
+            
         print(f"Helius API Error: {response.status_code} - {response.text}")
         return None
     except Exception as e:
         print(f"Error fetching recent trades: {str(e)}")
+        print(f"Error type: {type(e)}")
+        if hasattr(e, '__traceback__'):
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
         return None
 
 def is_trade_transaction(tx):
@@ -540,15 +562,18 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
     
+    print(f"\n--- Fetching trades for user {user_id} ---")
+    print(f"Token address: {token_address}")
+    
     trades = fetch_recent_trades(token_address)
     if not trades:
-        await update.message.reply_text(escape_md("⚠️ Could not fetch trade data."), parse_mode="MarkdownV2")
+        await update.message.reply_text(escape_md("⚠️ Could not fetch trade data. This might be due to API rate limits or the token not being actively traded."), parse_mode="MarkdownV2")
         return
     
     message = "*🔄 Recent Trades*\n\n"
     for trade in trades[:5]:
         sig = trade["signature"]
-        timestamp = datetime.fromtimestamp(trade["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.fromtimestamp(trade["timestamp"]/1000).strftime("%Y-%m-%d %H:%M:%S")
         amount = trade["amount"]
         trade_type = trade["type"]
         
@@ -575,7 +600,7 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if liquidity_data["recent_events"]:
         message += "*Recent Events:*\n"
         for event in liquidity_data["recent_events"]:
-            timestamp = datetime.fromtimestamp(event["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = datetime.fromtimestamp(event["timestamp"]/1000).strftime("%Y-%m-%d %H:%M:%S")
             sig = event["signature"]
             emoji = "➕" if event["type"] == "Add Liquidity" else "➖"
             message += f"{emoji} {event['type']}: {event['amount']:,.0f} tokens\n"
