@@ -122,31 +122,54 @@ def generate_alert_message(pair):
     buy_sell_ratio = buys_1h / sells_1h if sells_1h > 0 else float('inf')
     liquidity_concentration = abs(liquidity_base - liquidity_quote) / liquidity if liquidity > 0 else 0
 
+    # Debug log all metrics
+    print("\n=== Alert Metrics ===")
+    print(f"Price USD: ${price_usd:.6f}")
+    print(f"1h Price Change: {price_change_1h:.2f}%")
+    print(f"24h Volume: ${volume_24h:,.0f}")
+    print(f"1h Volume: ${volume_1h:,.0f}")
+    print(f"Liquidity: ${liquidity:,.0f}")
+    print(f"24h Liquidity Change: ${liquidity_change_24h:,.0f}")
+    print(f"Market Cap: ${market_cap:,.0f}")
+    print(f"FDV: ${fdv:,.0f}")
+    print(f"1h Buys: {buys_1h}")
+    print(f"1h Sells: {sells_1h}")
+    print(f"Avg Buy Size: ${avg_buy_size:,.2f}")
+    print(f"Avg Sell Size: ${avg_sell_size:,.2f}")
+    print(f"Buy/Sell Ratio: {buy_sell_ratio:.2f}")
+    print(f"Liquidity Concentration: {liquidity_concentration:.2f}")
+
     # Pump alert: Significant price increase with volume
-    if price_change_1h > 20 and volume_1h > volume_24h / 12:  # Volume higher than average
+    if price_change_1h > 20 and volume_1h > volume_24h / 12:
+        print("✅ Pump Alert triggered!")
         return "📈 *Pump Alert!* 🚀\nRapid price increase with high volume!"
     
     # Retail arrival: Many small buys and increasing price
     elif buys_1h > 500 and avg_buy_size < 100 and price_change_1h > 5:
+        print("✅ Retail Arrival triggered!")
         return "🛍 *Retail Arrival Detected!*\nMany small buys with price uptick!"
     
     # Market maker: Large liquidity changes with balanced trading and low price impact
     elif (abs(liquidity_change_24h) > 1000000 and 
           0.8 < buy_sell_ratio < 1.2 and 
-          liquidity_concentration < 0.1):  # Balanced liquidity
+          liquidity_concentration < 0.1):
+        print("✅ Market Maker triggered!")
         return "🔄 *Market Maker Transfer!* 📊\nLarge balanced liquidity movement!"
     
     # Dump alert: Price drop with high volume
     elif price_change_1h < -20 and volume_1h > volume_24h / 12:
+        print("✅ Dump Alert triggered!")
         return "⚠️ *Dump Alert!* 💥\nSignificant price drop with high volume!"
     
     # Capitulation: Many small sells with decreasing price and low mcap
     elif (sells_1h > 1000 and 
           avg_sell_size < 100 and 
           price_change_1h < -10 and 
-          market_cap < fdv * 0.8):  # Market cap significantly below FDV
+          market_cap < fdv * 0.8):
+        print("✅ Retail Capitulation triggered!")
         return "💀 *Retail Capitulation!* 🏳️\nMass panic selling detected!"
     
+    print("❌ No alerts triggered")
     return None
 
 ### Telegram Command: Fetch Alerts ###
@@ -339,7 +362,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         
         # Get recent trades
         trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
-        trade_message = "\n\n" + generate_trade_alert_message(trades)
+        trade_message = "\n\n" + generate_trade_alert_message(trades) if trades else ""
         
         # Combine messages
         full_message = price_message + trade_message
