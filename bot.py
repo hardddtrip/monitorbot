@@ -328,35 +328,63 @@ def fetch_token_metadata(token_address):
     """Fetch detailed token metadata using Helius RPC."""
     url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
     
+    print(f"\n--- Fetching metadata for token: {token_address} ---")
+    
+    # First try to get token info using getToken
     payload = {
         "jsonrpc": "2.0",
-        "id": "my-id",
-        "method": "getTokenMetadata",
+        "id": "token-1",
+        "method": "getToken",
         "params": [token_address]
     }
     
     try:
+        print("Attempting to fetch token info...")
         response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        print(f"API Response Status: {response.status_code}")
+        print(f"Response content: {response.text[:500]}...")  # Print first 500 chars
+        
         if response.status_code == 200:
-            result = response.json().get("result", {})
-            if not result:
-                # Try fallback to DexScreener data
-                pair = fetch_token_data(token_address)
-                if pair:
+            result = response.json()
+            if "error" in result:
+                print(f"Helius API Error: {result['error']}")
+            else:
+                token_data = result.get("result", {})
+                if token_data:
+                    print("Successfully fetched token data from Helius")
                     return {
-                        "name": pair.get("baseToken", {}).get("name"),
-                        "symbol": pair.get("baseToken", {}).get("symbol"),
-                        "decimals": pair.get("baseToken", {}).get("decimals"),
-                        "supply": pair.get("baseToken", {}).get("totalSupply"),
-                        "price": pair.get("priceUsd"),
-                        "volume24h": pair.get("volume", {}).get("h24"),
-                        "source": "DexScreener"
+                        "name": token_data.get("name"),
+                        "symbol": token_data.get("symbol"),
+                        "decimals": token_data.get("decimals"),
+                        "supply": token_data.get("supply"),
+                        "source": "Helius"
                     }
-            return result
-        print(f"Helius API Error: {response.status_code} - {response.text}")
+        
+        # If Helius fails, try DexScreener as fallback
+        print("Falling back to DexScreener...")
+        pair = fetch_token_data(token_address)
+        if pair:
+            print("Successfully fetched data from DexScreener")
+            base_token = pair.get("baseToken", {})
+            return {
+                "name": base_token.get("name"),
+                "symbol": base_token.get("symbol"),
+                "decimals": base_token.get("decimals"),
+                "supply": base_token.get("totalSupply"),
+                "price": pair.get("priceUsd"),
+                "volume24h": pair.get("volume", {}).get("h24"),
+                "source": "DexScreener"
+            }
+        
+        print("Failed to fetch data from both Helius and DexScreener")
         return None
+        
     except Exception as e:
         print(f"Error fetching token metadata: {str(e)}")
+        print(f"Error type: {type(e)}")
+        if hasattr(e, '__traceback__'):
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
         return None
 
 def fetch_token_holders(token_address, limit=20):
@@ -616,16 +644,25 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.chat_id
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
     
+    print(f"\n--- Fetching metadata for user {user_id} ---")
+    print(f"Token address: {token_address}")
+    
     metadata = fetch_token_metadata(token_address)
     if not metadata:
-        await update.message.reply_text(escape_md("⚠️ Could not fetch token metadata."), parse_mode="MarkdownV2")
+        await update.message.reply_text(
+            escape_md("⚠️ Could not fetch token metadata. Please verify the token address is correct."),
+            parse_mode="MarkdownV2"
+        )
         return
     
     message = "*ℹ️ Token Metadata*\n\n"
+    
+    # Basic token info
     message += f"Name: {metadata.get('name', 'Unknown')}\n"
     message += f"Symbol: {metadata.get('symbol', 'Unknown')}\n"
     message += f"Decimals: {metadata.get('decimals', 'Unknown')}\n"
     
+    # Supply info
     supply = metadata.get('supply')
     if supply is not None:
         try:
@@ -634,6 +671,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, TypeError):
             message += f"Total Supply: {supply}\n"
     
+    # Price info (if available)
     price = metadata.get('price')
     if price is not None:
         try:
@@ -642,6 +680,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, TypeError):
             message += f"Price: {price}\n"
     
+    # Volume info (if available)
     volume = metadata.get('volume24h')
     if volume is not None:
         try:
@@ -650,6 +689,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, TypeError):
             message += f"24h Volume: {volume}\n"
     
+    # Data source
     source = metadata.get('source', 'Helius')
     message += f"\nData Source: {source}"
     
