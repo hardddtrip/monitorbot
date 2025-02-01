@@ -520,13 +520,17 @@ async def fetch_recent_trades(token_address, limit=10):
         
         # Make API request
         response = requests.get(url, params=params)
+        print(f"API Response Status: {response.status_code}")
+        print(f"API Request Payload: {json.dumps(params, indent=2)}")
         
         if response.status_code != 200:
-            print(f"Error fetching trades: {response.status_code}")
+            print(f"Error response: {response.text}")
             return None
             
-        trades_data = response.json()
-        print(f"Found {len(trades_data)} trades")
+        data = response.json()
+        print(f"API Response Data: {json.dumps(data, indent=2)}")
+        trades_data = data
+        print(f"Total transactions returned: {len(trades_data)}")
         
         trades = []
         for tx in trades_data:
@@ -935,12 +939,14 @@ def analyze_recent_transactions(token_address, minutes=15):
         
         response = requests.post(url, json=payload)
         print(f"API Response Status: {response.status_code}")
+        print(f"API Request Payload: {json.dumps(payload, indent=2)}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
         data = response.json()
+        print(f"API Response Data: {json.dumps(data, indent=2)}")
         transactions = data.get('items', [])
         print(f"Total transactions returned: {len(transactions)}")
         
