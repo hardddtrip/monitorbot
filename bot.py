@@ -96,18 +96,15 @@ def fetch_token_data(token_address):
 ### 🔹 Generate Alert Message ###
 def generate_alert_message(pair):
     """Generate alert messages based on token metrics."""
-    
-        pair = fetch_token_data(token_address)
 
     if not pair:
-        await update.message.reply_text("⚠️ No trading data found for this token.")
-        return
+        return "⚠️ No trading data found for this token."
 
-    price_usd =  float(pair["priceUsd"])
-    volume_24h =  float(pair["volume"]["h24"])
-    liquidity =  float(pair["liquidity"]["usd"])
-    market_cap =  float(pair.get("marketCap", "N/A"))
-    dex_url =  float(pair["url"])
+    price_usd = float(pair["priceUsd"])
+    volume_24h = float(pair["volume"]["h24"])
+    liquidity = float(pair["liquidity"]["usd"])
+    market_cap = pair.get("marketCap", "N/A")
+    dex_url = pair["url"]
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
     if price_usd > 1.2 * price_change_1h:
