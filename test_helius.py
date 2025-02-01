@@ -66,8 +66,7 @@ def test_recent_trades():
         
         params = {
             "api-key": HELIUS_API_KEY,
-            "before": str(int(time.time())),  # Current time
-            "limit": "10"  # Get 10 most recent transactions
+            "type": "SWAP"  # Only get swap transactions
         }
         
         print("\nMaking API request...")
@@ -77,11 +76,11 @@ def test_recent_trades():
         if response.status_code == 200:
             data = response.json()
             print("\nRaw response:")
-            print(json.dumps(data, indent=2))
+            print(json.dumps(data[:5], indent=2))  # Show first 5 transactions
             
             if data:
                 print("\nParsing trades...")
-                for tx in data:
+                for tx in data[:10]:  # Look at first 10 transactions
                     timestamp = datetime.fromtimestamp(tx.get("timestamp", 0))
                     sig = tx.get("signature", "Unknown")
                     

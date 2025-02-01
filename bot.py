@@ -143,7 +143,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = generate_alert_message(pair)
     
     # Add recent trades info if available
-    trades = fetch_recent_trades(token_address)
+    trades = await fetch_recent_trades(token_address)
     if trades:
         message += "\n\n*Recent Trades:*\n"
         for trade in trades[:3]:  # Show last 3 trades
@@ -268,7 +268,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
                 message = generate_alert_message(pair)
                 
                 # Add recent trades info
-                trades = fetch_recent_trades(token_address)
+                trades = await fetch_recent_trades(token_address)
                 if trades:
                     message += "\n\n*Recent Trades:*\n"
                     for trade in trades[:3]:
@@ -352,10 +352,10 @@ async def fetch_recent_trades(token_address, limit=10):
     try:
         url = "https://api.helius.xyz/v0/addresses/" + token_address + "/transactions"
         
+        # Use simpler parameters
         params = {
             "api-key": HELIUS_API_KEY,
-            "until": str(int(time.time())),  # Current time
-            "limit": str(limit)
+            "type": "SWAP",  # Only get swap transactions
         }
         
         response = requests.get(url, params=params)
@@ -364,7 +364,8 @@ async def fetch_recent_trades(token_address, limit=10):
             data = response.json()
             trades = []
             
-            for tx in data:  # Process all returned transactions
+            # Process only up to limit transactions
+            for tx in data[:limit]:
                 # Extract basic transaction info
                 trade_info = {
                     "signature": tx.get("signature", "Unknown"),
@@ -382,7 +383,7 @@ async def fetch_recent_trades(token_address, limit=10):
                             trades.append(trade_info)
                             break
             
-            return trades[:limit] if trades else None  # Return None if no trades found
+            return trades if trades else None  # Return None if no trades found
         
         print(f"Error response from Helius API: {response.status_code}")
         print(response.text)
@@ -425,7 +426,7 @@ def fetch_liquidity_changes(token_address):
             return None
 
         # Get recent transactions
-        trades = fetch_recent_trades(token_address, 50)
+        trades = await fetch_recent_trades(token_address, 50)
         if not trades:
             return None
 
