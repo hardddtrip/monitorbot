@@ -17,8 +17,7 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Helius API Key
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # Add environment variable
-DEFAULT_TOKEN_ADDRESS = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-DEFAULT_WALLET = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4"
+DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"  # EGG token
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
@@ -37,15 +36,15 @@ def escape_md(text):
 
 
 ### Fetch Recent Solana Transactions (Helius API) ###
-def fetch_solana_transactions(wallet_address, limit=10):
-    """Fetch recent transactions for a wallet using enhanced Helius RPC."""
+def fetch_solana_transactions(token_address, limit=10):
+    """Fetch recent transactions for a token using enhanced Helius RPC."""
     try:
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
             "method": "getSignaturesForAddress",
             "params": [
-                wallet_address,
+                token_address,
                 {
                     "limit": limit
                 }
@@ -112,67 +111,31 @@ def generate_alert_message(pair):
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Telegram command to fetch token price and transaction data."""
     user_id = update.message.chat_id
-    wallet_address = DEFAULT_WALLET
-    token_address = DEFAULT_TOKEN_ADDRESS
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
 
     pair = fetch_token_data(token_address)
-    transactions = fetch_solana_transactions(wallet_address)
+    trades = fetch_solana_transactions(token_address)
+    
+    if not pair:
+        await update.message.reply_text("❌ Failed to fetch token data")
+        return
 
-    message = "🔎 *Token Analytics & Transactions*\n\n"
-
-    # DexScreener Price Alert
-    if pair:
-        alert_message = generate_alert_message(pair)
-        if alert_message:
-            message += f"{alert_message}\n\n"
-
-    # Recent Transactions
-    if transactions:
-        message += "📜 *Recent Transactions:*\n"
-        for tx in transactions[:5]:
-            tx_hash = tx.get('signature', 'Unknown')
-            slot = tx.get('slot', 'N/A')
-            message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
-    else:
-        message += "⚠️ No recent transactions found.\n"
-
-    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
-
-
-async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Background job to fetch Solana transactions & send alerts to subscribed users."""
-    for user_id in [user_id for user_id in context.application.user_data.keys() if 'subscribed' in context.application.user_data[user_id]]:
-        wallet_address = DEFAULT_WALLET
-        token_address = DEFAULT_TOKEN_ADDRESS
-
-        pair = fetch_token_data(token_address)
-        transactions = fetch_solana_transactions(wallet_address)
-
-        message = "🔎 *Token Analytics & Transactions*\n\n"
-
-        # DexScreener Price Alert
-        if pair:
-            alert_message = generate_alert_message(pair)
-            if alert_message:
-                message += f"{alert_message}\n\n"
-
-        # Recent Transactions
-        if transactions:
-            message += "📜 *Recent Transactions:*\n"
-            for tx in transactions[:5]:
-                tx_hash = tx.get('signature', 'Unknown')
-                slot = tx.get('slot', 'N/A')
-                message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
-        else:
-            message += "⚠️ No recent transactions found.\n"
-
-        await context.bot.send_message(chat_id=user_id, text=escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
+    message = generate_alert_message(pair)
+    
+    # Add recent trades info if available
+    if trades:
+        message += "\n\n*Recent Trades:*\n"
+        for trade in trades[:3]:  # Show last 3 trades
+            timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%H:%M:%S")
+            message += f"• {timestamp}: {trade['type']} - Amount: {trade['amount']:,.0f}\n"
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
 ### Telegram Command: Fetch Token Price ###
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch token price and market data."""
     user_id = update.message.chat_id
-    token_address = DEFAULT_TOKEN_ADDRESS
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     pair = fetch_token_data(token_address)
 
     if not pair:
@@ -221,27 +184,27 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ### Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
-    help_text = escape_md(
-        "🤖 *Token Monitor Bot Commands*\n\n"
-        "*Basic Commands:*\n"
-        "/start - Start the bot\n"
+    help_text = (
+        "*🤖 Bot Commands:*\n\n"
+        "📊 *Price & Analytics:*\n"
+        "/price - Get current token price and stats\n"
+        "/metadata - View token metadata\n"
+        "/holders - View top token holders\n"
+        "/trades - View recent trades\n"
+        "/liquidity - View liquidity changes\n\n"
+        "🔔 *Alerts:*\n"
+        "/alert - Get a one-time alert\n"
+        "/subscribe - Enable automatic alerts\n"
+        "/unsubscribe - Disable automatic alerts\n\n"
+        "⚙️ *Settings:*\n"
+        "/change <address> - Track a different token\n"
         "/help - Show this help message\n"
-        "/ping - Check if bot is alive\n\n"
-        "*Price & Alerts:*\n"
-        "/price - Get current token price\n"
-        "/alert - Check alerts manually\n"
-        "/subscribe - Enable auto alerts (24h)\n"
-        "/unsubscribe - Disable auto alerts\n\n"
-        "*Token Analysis:*\n"
-        "/metadata - Show token info\n"
-        "/holders - View top holders\n"
-        "/trades - Recent large trades\n"
-        "/liquidity - Liquidity analysis\n\n"
-        "*Settings:*\n"
-        "/change <TOKEN_ADDRESS> - Change token address"
+        "/ping - Check if bot is running\n\n"
+        "*Current Token:* EGG\n"
+        "*Default Address:* `EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump`"
     )
-    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
-
+    
+    await update.message.reply_text(escape_md(help_text), parse_mode="MarkdownV2")
 
 ### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
 async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -278,15 +241,23 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         try:
             token_address = context.application.user_data[user_id].get('token_address', DEFAULT_TOKEN_ADDRESS)
             pair = fetch_token_data(token_address)
-
+            trades = fetch_solana_transactions(token_address)
+            
             if pair:
-                alert_message = generate_alert_message(pair)
-                if alert_message:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=escape_md(alert_message),
-                        parse_mode="MarkdownV2"
-                    )
+                message = generate_alert_message(pair)
+                
+                # Add recent trades info
+                if trades:
+                    message += "\n\n*Recent Trades:*\n"
+                    for trade in trades[:3]:
+                        timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%Y-%m-%d %H:%M:%S")
+                        message += f"• {timestamp}: {trade['type']} - Amount: {trade['amount']:,.0f}\n"
+                
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=escape_md(message),
+                    parse_mode="MarkdownV2"
+                )
         except Exception as e:
             print(f"Error sending alert to user {user_id}: {str(e)}")
 
