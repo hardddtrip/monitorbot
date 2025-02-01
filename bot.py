@@ -319,6 +319,7 @@ def main():
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
+    app.add_handler(CommandHandler("change", change_command))
     app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
     app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
     
