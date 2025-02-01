@@ -33,6 +33,8 @@ DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"
 
 # Helius API endpoints
 HELIUS_API_URL = "https://api.helius.xyz/v0"
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}" if HELIUS_API_KEY else None
 
 ### --- MarkdownV2 Escaping Function --- ###
 def escape_md(text):
@@ -1122,7 +1124,6 @@ def main():
         # Check for required environment variables
         TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
-        HELIUS_RPC_URL = os.getenv("HELIUS_RPC_URL")
         
         if not TELEGRAM_BOT_TOKEN:
             raise ValueError(
@@ -1134,25 +1135,11 @@ def main():
                 "HELIUS_API_KEY is missing! This token should be configured in your Heroku environment variables. "
                 "For local development, you can set it in a .env file."
             )
-        if not HELIUS_RPC_URL:
-            raise ValueError(
-                "HELIUS_RPC_URL is missing! This token should be configured in your Heroku environment variables. "
-                "For local development, you can set it in a .env file."
-            )
-        
+            
         # Create the bot application
         application = (
             ApplicationBuilder()
             .token(TELEGRAM_BOT_TOKEN)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .write_timeout(30)
-            .pool_timeout(30)
-            .get_updates_connect_timeout(30)
-            .get_updates_read_timeout(30)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
-            .concurrent_updates(True)  
             .build()
         )
 
