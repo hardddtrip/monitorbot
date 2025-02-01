@@ -510,7 +510,7 @@ def fetch_token_holders(token_address, limit=20):
         return None
 
 async def fetch_recent_trades(token_address, limit=10):
-    """Enhanced recent trades fetch with DAS API integration."""
+    """Get recent trades for a token."""
     try:
         # Get Helius API key
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
@@ -518,7 +518,7 @@ async def fetch_recent_trades(token_address, limit=10):
             print("Missing HELIUS_API_KEY")
             return None
             
-        # Use Helius DAS API
+        # Use Helius Address History API
         url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
         print(f"Fetching trades from Helius API: {url}")
         
@@ -530,43 +530,44 @@ async def fetch_recent_trades(token_address, limit=10):
             print(f"Error response: {response.text}")
             return None
             
-        data = response.json()
-        trades_data = data
-        print(f"Total transactions returned: {len(trades_data)}")
+        transactions = response.json()
+        print(f"Total transactions returned: {len(transactions)}")
         
         trades = []
-        for tx in trades_data:
-            # Extract trade details
-            source = tx.get('sourceAddress', '')
-            type = tx.get('type', '')
-            description = tx.get('description', '')
-            timestamp = tx.get('timestamp', 0) / 1000  # Convert to seconds
-            
-            # Try to extract amount from token transfers
-            amount = 0
-            if 'tokenTransfers' in tx:
-                for transfer in tx['tokenTransfers']:
-                    if transfer.get('mint') == token_address:
-                        amount = float(transfer.get('tokenAmount', 0))
-                        break
-            
+        for tx in transactions:
             # Only include swap transactions
-            if "SWAP" in type or "swap" in description.lower():
-                trades.append({
-                    'type': 'swap',
-                    'amount': amount,
-                    'timestamp': timestamp,
-                    'source': source,
-                    'success': tx.get('successful', True)
-                })
+            if tx.get('type') != 'SWAP':
+                continue
                 
-                if len(trades) >= limit:
+            # Extract trade details
+            source = tx.get('feePayer', '')
+            description = tx.get('description', '')
+            timestamp = tx.get('timestamp', 0)
+            
+            # Extract amount from token transfers
+            amount = 0
+            token_transfers = tx.get('tokenTransfers', [])
+            for transfer in token_transfers:
+                if transfer.get('mint') == token_address:
+                    amount = float(transfer.get('tokenAmount', 0))
                     break
+            
+            trades.append({
+                'type': 'swap',
+                'amount': amount,
+                'timestamp': timestamp,
+                'source': source,
+                'description': description,
+                'success': tx.get('transactionError') is None
+            })
+            
+            if len(trades) >= limit:
+                break
         
         return trades[:limit]
         
     except Exception as e:
-        print(f"Error in fetch_recent_trades: {str(e)}")
+        print(f"Error getting recent trades: {str(e)}")
         return None
 
 async def fetch_liquidity_changes(token_address):
@@ -903,23 +904,16 @@ def fetch_token_info(token_address):
     except Exception as e:
         return None
 
-def analyze_recent_transactions(token_address, minutes=15):
-    """Analyze recent transactions for patterns and unusual activity"""
+async def analyze_recent_transactions(token_address, minutes=15):
+    """Analyze recent transactions for patterns and unusual activity."""
     try:
-        # Get transactions from the last 15 minutes
-        current_time = int(time.time())
-        cutoff_time = current_time - (minutes * 60)
-        
-        print(f"\nAnalyzing transactions for {token_address}")
-        print(f"Time window: {minutes} minutes (from {cutoff_time} to {current_time})")
-        
-        # Fetch transactions using Helius DAS API for better transaction parsing
+        # Get Helius API key
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
         if not HELIUS_API_KEY:
             print("Missing HELIUS_API_KEY")
             return None
             
-        # Use Helius DAS API
+        # Use Helius Address History API
         url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
         print(f"Fetching transactions from Helius API: {url}")
         
@@ -931,173 +925,98 @@ def analyze_recent_transactions(token_address, minutes=15):
             print(f"Error response: {response.text}")
             return None
             
-        data = response.json()
-        print(f"API Response Data: {json.dumps(data[:2], indent=2)}")  # Show first 2 transactions only
-        transactions = data
+        transactions = response.json()
         print(f"Total transactions returned: {len(transactions)}")
         
-        if not transactions:
-            print("No transactions found")
-            return {
-                "transaction_count": 0,
-                "active_wallets": 0,
-                "trading_velocity": 0,
-                "patterns": {
-                    "swaps": 0,
-                    "rapid_swaps": 0,
-                    "bot_trades": 0,
-                    "wash_trades": 0,
-                    "sandwich_attacks": 0,
-                    "flash_loans": 0,
-                    "high_slippage": 0,
-                    "arbitrage": 0,
-                    "failed": 0
-                },
-                "risk_metrics": {
-                    "bot_activity": 0,
-                    "wash_trading": 0,
-                    "failed_tx_ratio": 0,
-                    "large_trade_ratio": 0
-                }
-            }
-        
-        # Filter and analyze transactions
-        wallets = set()
-        wallet_last_trade = {}  # Last trade time per wallet
-        wallet_trade_counts = {}  # Number of trades per wallet
-        large_trades = []  # Track large trades for sandwich detection
-        
+        # Initialize counters
+        transaction_count = len(transactions)
+        active_wallets = set()
         patterns = {
-            "swaps": 0,
-            "rapid_swaps": 0,
-            "bot_trades": 0,
-            "wash_trades": 0,
-            "sandwich_attacks": 0,
-            "flash_loans": 0,
-            "high_slippage": 0,
-            "arbitrage": 0,
-            "failed": 0
+            'swaps': 0,
+            'transfers': 0,
+            'large_transfers': 0,
+            'multi_transfers': 0,
+            'failed': 0,
+            'rapid_swaps': 0,
+            'wash_trades': 0,
+            'sandwich_attacks': 0,
+            'flash_loans': 0,
+            'high_slippage': 0,
+            'arbitrage': 0,
+            'bot_trades': 0
         }
         
+        # Track wallet interactions
+        wallet_interactions = {}
+        wallet_tx_counts = {}
+        
+        # Process transactions
+        recent_transactions = []
         for tx in transactions:
-            # Skip old transactions
-            timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
-            if timestamp < cutoff_time:
-                continue
-                
-            # Extract transaction details
-            source = tx.get('sourceAddress', '')
-            type = tx.get('type', '')
+            # Extract basic info
+            tx_type = tx.get('type', 'UNKNOWN')
+            source = tx.get('feePayer', '')
             description = tx.get('description', '')
+            timestamp = tx.get('timestamp', 0)
+            success = tx.get('transactionError') is None
             
-            # Try to extract amount from different possible locations
+            # Track active wallets
+            active_wallets.add(source)
+            
+            # Update pattern counters
+            if tx_type == 'SWAP':
+                patterns['swaps'] += 1
+            elif 'transfer' in description.lower():
+                patterns['transfers'] += 1
+                
+            if not success:
+                patterns['failed'] += 1
+                
+            # Extract amount from token transfers
             amount = 0
-            if 'tokenTransfers' in tx:
-                for transfer in tx['tokenTransfers']:
-                    if transfer.get('mint') == token_address:
-                        amount = float(transfer.get('tokenAmount', 0))
-                        break
+            token_transfers = tx.get('tokenTransfers', [])
+            for transfer in token_transfers:
+                if transfer.get('mint') == token_address:
+                    amount = float(transfer.get('tokenAmount', 0))
+                    break
             
-            print(f"\nAnalyzing transaction:")
-            print(f"Type: {type}")
-            print(f"Description: {description}")
-            print(f"Source: {source}")
-            print(f"Amount: {amount}")
-            print(f"Timestamp: {timestamp}")
+            recent_transactions.append({
+                'type': tx_type.lower(),
+                'description': description,
+                'amount': amount,
+                'timestamp': timestamp,
+                'source': source,
+                'success': success
+            })
             
-            if source:
-                wallets.add(source)
+            # Update wallet stats
+            wallet_tx_counts[source] = wallet_tx_counts.get(source, 0) + 1
             
-            # Track wallet trading patterns
-            if source in wallet_last_trade:
-                time_since_last = timestamp - wallet_last_trade[source]
-                if time_since_last < 60:  # Within 1 minute
-                    patterns["rapid_swaps"] += 1
-                    print("Detected rapid swap")
-                    if time_since_last < 3:  # Within 3 seconds
-                        patterns["bot_trades"] += 1
-                        print("Detected bot trade")
-            
-            wallet_last_trade[source] = timestamp
-            wallet_trade_counts[source] = wallet_trade_counts.get(source, 0) + 1
-            
-            # Analyze transaction type
-            if "SWAP" in type or "swap" in description.lower():
-                patterns["swaps"] += 1
-                print("Detected swap transaction")
+            # Look for patterns in token transfers
+            if len(token_transfers) > 2:
+                patterns['multi_transfers'] += 1
                 
-                # Check for high slippage
-                if tx.get('slippage', 0) > 5:
-                    patterns["high_slippage"] += 1
-                    print("Detected high slippage")
-                    
-                # Check for arbitrage
-                if "arbitrage" in description.lower() or len(tx.get('tokenTransfers', [])) > 2:
-                    patterns["arbitrage"] += 1
-                    print("Detected arbitrage")
-                    
-                # Track for sandwich attack detection
-                if amount > 5000:  # Large trades
-                    large_trades.append({
-                        "timestamp": timestamp,
-                        "amount": amount
-                    })
-                    print(f"Detected large trade: {amount}")
-            
-            # Check for flash loans
-            if "flash_loan" in description.lower() or (source == tx.get('destinationAddress') and amount > 10000):
-                patterns["flash_loans"] += 1
-                print("Detected flash loan")
-            
-            # Check for failed transactions
-            if not tx.get('successful', True):
-                patterns["failed"] += 1
-                print("Detected failed transaction")
+            # Check for large transfers
+            if amount > 1000:  # Adjust threshold as needed
+                patterns['large_transfers'] += 1
                 
-            # Check for wash trading
-            if source in wallet_trade_counts and wallet_trade_counts[source] >= 3:
-                patterns["wash_trades"] += 1
-                print("Detected wash trading")
-                
-            # Check for sandwich attacks
-            if len(large_trades) >= 3:
-                for i in range(len(large_trades) - 2):
-                    if (large_trades[i+1]["timestamp"] - large_trades[i]["timestamp"] < 60 and
-                        large_trades[i+2]["timestamp"] - large_trades[i+1]["timestamp"] < 60):
-                        if large_trades[i+1]["amount"] > large_trades[i]["amount"] * 2:
-                            patterns["sandwich_attacks"] += 1
-                            print("Detected sandwich attack")
-        
-        # Calculate trading velocity (tx/min)
-        total_trades = len([tx for tx in transactions if tx.get("timestamp", 0)/1000 >= cutoff_time])
-        trading_velocity = total_trades / minutes if minutes > 0 else 0
-        
-        print(f"\nAnalysis Results:")
-        print(f"Total trades in window: {total_trades}")
-        print(f"Active wallets: {len(wallets)}")
-        print(f"Trading velocity: {trading_velocity:.2f} tx/min")
-        print(f"Patterns detected: {patterns}")
-        
-        # Calculate risk metrics
-        if total_trades > 0:
-            bot_activity = (patterns["bot_trades"] / total_trades) * 100
-            wash_trading = (patterns["wash_trades"] / total_trades) * 100
-            failed_tx_ratio = (patterns["failed"] / total_trades) * 100
-            large_trade_ratio = (len(large_trades) / total_trades) * 100
+        # Calculate trading velocity (transactions per minute)
+        if transaction_count > 0:
+            time_range = (transactions[0].get('timestamp', 0) - transactions[-1].get('timestamp', 0)) / 60
+            trading_velocity = transaction_count / time_range if time_range > 0 else 0
         else:
-            bot_activity = wash_trading = failed_tx_ratio = large_trade_ratio = 0
+            trading_velocity = 0
+            
+        # Get top suspicious wallets
+        suspicious_wallets = dict(sorted(wallet_tx_counts.items(), key=lambda x: x[1], reverse=True)[:5])
         
         return {
-            "transaction_count": total_trades,
-            "active_wallets": len(wallets),
-            "trading_velocity": round(trading_velocity, 2),
-            "patterns": patterns,
-            "risk_metrics": {
-                "bot_activity": round(bot_activity, 1),
-                "wash_trading": round(wash_trading, 1),
-                "failed_tx_ratio": round(failed_tx_ratio, 1),
-                "large_trade_ratio": round(large_trade_ratio, 1)
-            }
+            'transaction_count': transaction_count,
+            'active_wallets': len(active_wallets),
+            'trading_velocity': trading_velocity,
+            'patterns': patterns,
+            'suspicious_wallets': suspicious_wallets,
+            'recent_transactions': recent_transactions[:5]
         }
         
     except Exception as e:
@@ -1117,7 +1036,7 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if context.args and context.args[0].isdigit():
         minutes = int(context.args[0])
     
-    analysis = analyze_recent_transactions(token_address, minutes)
+    analysis = await analyze_recent_transactions(token_address, minutes)
     if not analysis:
         await update.message.reply_text("❌ Failed to analyze transactions. Please try again later.")
         return
@@ -1142,12 +1061,15 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message += f"• Arbitrage: {patterns['arbitrage']}\n"
     message += f"• Failed Transactions: {patterns['failed']}\n\n"
     
-    message += f"*Risk Metrics*:\n"
-    risk = analysis['risk_metrics']
-    message += f"• Bot Activity: {risk['bot_activity']}%\n"
-    message += f"• Wash Trading: {risk['wash_trading']}%\n"
-    message += f"• Failed Tx Ratio: {risk['failed_tx_ratio']}%\n"
-    message += f"• Large Trade Ratio: {risk['large_trade_ratio']}%\n"
+    message += f"*Suspicious Wallets*:\n"
+    suspicious = analysis['suspicious_wallets']
+    for wallet, count in suspicious.items():
+        message += f"• `{wallet[:8]}...`: {count} transactions\n"
+    
+    message += f"*Recent Transactions*:\n"
+    recent = analysis['recent_transactions']
+    for tx in recent:
+        message += f"• `{tx['source'][:8]}...`: {tx['amount']:.2f} tokens\n"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
