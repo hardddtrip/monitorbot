@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 from telegram.error import Conflict, TimedOut
 from datetime import datetime
+import sys
 
 # Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -591,36 +592,47 @@ def generate_alert_message(trades):
 def main():
     """Run the Telegram bot."""
     try:
-        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        job_queue = app.job_queue
+        # Create application and pass it your bot's token
+        application = (
+            ApplicationBuilder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .connect_timeout(30)  # Longer timeout for slow connections
+            .read_timeout(30)
+            .write_timeout(30)
+            .pool_timeout(30)
+            .get_updates_request_timeout(30)
+            .get_updates_connection_retry_after(1.0)  # Retry after 1 second
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
+            .build()
+        )
 
-        # Set up command handlers
-        app.add_handler(CommandHandler("start", start_command))
-        app.add_handler(CommandHandler("help", help_command))
-        app.add_handler(CommandHandler("price", price_command))
-        app.add_handler(CommandHandler("alert", alert_command))
-        app.add_handler(CommandHandler("change", change_command))
-        app.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
-        app.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
-        app.add_handler(CommandHandler("ping", ping_command))
-        app.add_handler(CommandHandler("holders", holders_command))
-        app.add_handler(CommandHandler("trades", trades_command))
-        app.add_handler(CommandHandler("liquidity", liquidity_command))
-        app.add_handler(CommandHandler("metadata", metadata_command))
+        # Add command handlers
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("alert", alert_command))
+        application.add_handler(CommandHandler("trades", trades_command))
+        application.add_handler(CommandHandler("metadata", metadata_command))
 
         # Add error handler
-        app.add_error_handler(error_handler)
+        application.add_error_handler(error_handler)
 
-        # Set up job queue for alerts (every 2 minutes)
-        job_queue.run_repeating(check_alerts, interval=120, first=10)
+        # Start the bot
+        print("Starting bot in production environment...")
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,  # Important: Drop pending updates to avoid conflicts
+            close_loop=False  # Don't close the event loop
+        )
 
-        print(f"Starting bot in {ENVIRONMENT} environment...")
-        app.run_polling(drop_pending_updates=True)
+    except telegram.error.Conflict as e:
+        print(f"Conflict error: {e}. Waiting for other instance to terminate...")
+        time.sleep(10)  # Wait 10 seconds before exiting
+        sys.exit(1)
     except Exception as e:
-        print(f"Error starting bot: {str(e)}")
-        if "Conflict" in str(e):
-            print("Another instance of the bot is already running. This instance will not start.")
-        raise
+        print(f"Error starting bot: {e}")
+        sys.exit(1)
 
 def error_handler(update: Update, context: CallbackContext) -> None:
     """Handle errors in the telegram bot."""
