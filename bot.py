@@ -114,8 +114,6 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
 
     pair = fetch_token_data(token_address)
-    trades = fetch_solana_transactions(token_address)
-    
     if not pair:
         await update.message.reply_text("❌ Failed to fetch token data")
         return
@@ -123,11 +121,14 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = generate_alert_message(pair)
     
     # Add recent trades info if available
+    trades = fetch_recent_trades(token_address)
     if trades:
         message += "\n\n*Recent Trades:*\n"
         for trade in trades[:3]:  # Show last 3 trades
-            timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%H:%M:%S")
-            message += f"• {timestamp}: {trade['type']} - Amount: {trade['amount']:,.0f}\n"
+            timestamp = datetime.fromtimestamp(trade.get("blockTime", 0)/1000).strftime("%Y-%m-%d %H:%M:%S")
+            trade_type = trade.get("type", "UNKNOWN")
+            amount = trade.get("amount", 0)
+            message += f"• {timestamp}: {trade_type} - Amount: {amount:,.0f}\n"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
@@ -235,23 +236,24 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
 
 ### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Check alerts every 2 minutes for subscribed users."""
-    current_time = time.time()
+    """Background job to check alerts for subscribed users."""
     for user_id in [user_id for user_id in context.application.user_data.keys() if 'subscribed' in context.application.user_data[user_id]]:
         try:
             token_address = context.application.user_data[user_id].get('token_address', DEFAULT_TOKEN_ADDRESS)
             pair = fetch_token_data(token_address)
-            trades = fetch_solana_transactions(token_address)
             
             if pair:
                 message = generate_alert_message(pair)
                 
                 # Add recent trades info
+                trades = fetch_recent_trades(token_address)
                 if trades:
                     message += "\n\n*Recent Trades:*\n"
                     for trade in trades[:3]:
-                        timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%Y-%m-%d %H:%M:%S")
-                        message += f"• {timestamp}: {trade['type']} - Amount: {trade['amount']:,.0f}\n"
+                        timestamp = datetime.fromtimestamp(trade.get("blockTime", 0)/1000).strftime("%Y-%m-%d %H:%M:%S")
+                        trade_type = trade.get("type", "UNKNOWN")
+                        amount = trade.get("amount", 0)
+                        message += f"• {timestamp}: {trade_type} - Amount: {amount:,.0f}\n"
                 
                 await context.bot.send_message(
                     chat_id=user_id,
