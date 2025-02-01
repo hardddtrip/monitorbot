@@ -590,29 +590,6 @@ def generate_trade_alert_message(trades):
     
     return message
 
-async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send alert about recent trades."""
-    try:
-        chat_id = update.message.chat_id
-        print(f"\n--- Fetching trades for user {chat_id} ---")
-        print(f"Token address: {DEFAULT_TOKEN_ADDRESS}")
-        
-        trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
-        
-        message = generate_trade_alert_message(trades)
-        
-        await update.message.reply_text(
-            text=message,
-            parse_mode='Markdown',
-            disable_web_page_preview=True
-        )
-        
-    except Exception as e:
-        print(f"Error in alert command: {str(e)}")
-        await update.message.reply_text(
-            "⚠️ An error occurred while fetching trade data. Please try again later."
-        )
-
 ### Bot Main Function ###
 def main():
     """Run the Telegram bot."""
