@@ -1,8 +1,14 @@
 import os
 import logging
 import requests
+import json
+from datetime import datetime
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 def fetch_token_data(token_address):
     """Fetch token data from DexScreener API"""
@@ -24,6 +30,34 @@ def fetch_token_data(token_address):
         logging.error(f"Error fetching token data: {str(e)}")
         return None
 
+def fetch_token_metadata(token_address):
+    """Fetch token metadata from Helius API"""
+    try:
+        HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+        if not HELIUS_API_KEY:
+            logging.error("HELIUS_API_KEY not found in environment variables")
+            return None
+
+        url = f"https://api.helius.xyz/v0/token-metadata?api-key={HELIUS_API_KEY}"
+        payload = {"mintAccounts": [token_address]}
+        response = requests.post(url, json=payload)
+        
+        if response.status_code != 200:
+            logging.error(f"Error fetching metadata: {response.status_code}")
+            return None
+            
+        data = response.json()
+        if not data or len(data) == 0:
+            return None
+            
+        # Log raw response for debugging
+        logging.debug(f"Raw metadata response: {json.dumps(data[0], indent=2)}")
+        return data[0]
+        
+    except Exception as e:
+        logging.error(f"Error fetching token metadata: {str(e)}")
+        return None
+
 def test_audit():
     """Test the token audit functionality without Telegram integration"""
     try:
@@ -31,12 +65,25 @@ def test_audit():
         token_address = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"
         logging.info(f"Fetching audit data for token: {token_address}")
         
+        # Get market data
         pair = fetch_token_data(token_address)
         if not pair:
             logging.error("❌ Failed to fetch token data")
             return
 
-        # Extract and log basic metrics
+        # Get token metadata
+        metadata = fetch_token_metadata(token_address)
+        if not metadata:
+            logging.error("❌ Failed to fetch token metadata")
+            return
+
+        logging.info("\n=== Token Information ===")
+        logging.info(f"Name: {metadata.get('metadata', {}).get('name', 'Unknown')}")
+        logging.info(f"Symbol: {metadata.get('metadata', {}).get('symbol', 'Unknown')}")
+        logging.info(f"Mint Authority: {'Frozen' if metadata.get('mint_authority') is None else 'Active'}")
+        logging.info(f"Freeze Authority: {'Yes' if metadata.get('freeze_authority') else 'No'}")
+        
+        # Market metrics
         price_usd = float(pair["priceUsd"])
         volume_24h = float(pair["volume"]["h24"])
         volume_1h = float(pair.get("volume", {}).get("h1", 0))
@@ -44,9 +91,10 @@ def test_audit():
         market_cap = float(pair.get("marketCap", 0))
         fdv = float(pair.get("fdv", 0))
         
-        logging.info("\n=== Token Audit Results ===")
+        logging.info("\n=== Market Metrics ===")
         logging.info(f"Price: ${price_usd:.6f}")
         logging.info(f"24h Volume: ${volume_24h:,.2f}")
+        logging.info(f"1h Volume: ${volume_1h:,.2f}")
         logging.info(f"Liquidity: ${liquidity:,.2f}")
         logging.info(f"Market Cap: ${market_cap:,.2f}")
         logging.info(f"FDV: ${fdv:,.2f}")
@@ -61,18 +109,53 @@ def test_audit():
         logging.info(f"24h: {price_change_24h:+.2f}%")
         logging.info(f"7d: {price_change_7d:+.2f}%")
         
-        # Transaction metrics
+        # Trading activity
         txns_24h = pair.get("txns", {}).get("h24", {})
+        txns_1h = pair.get("txns", {}).get("h1", {})
         buys_24h = int(txns_24h.get("buys", 0))
         sells_24h = int(txns_24h.get("sells", 0))
+        buys_1h = int(txns_1h.get("buys", 0))
+        sells_1h = int(txns_1h.get("sells", 0))
         
-        logging.info("\n=== Trading Activity (24h) ===")
-        logging.info(f"Buy Transactions: {buys_24h}")
-        logging.info(f"Sell Transactions: {sells_24h}")
+        logging.info("\n=== Trading Activity ===")
+        logging.info("24h Activity:")
+        logging.info(f"  • Buys: {buys_24h}")
+        logging.info(f"  • Sells: {sells_24h}")
+        logging.info("1h Activity:")
+        logging.info(f"  • Buys: {buys_1h}")
+        logging.info(f"  • Sells: {sells_1h}")
         
-        # Raw response for debugging
-        logging.info("\n=== Raw Response ===")
-        logging.info(f"Response: {pair}")
+        # Risk Analysis
+        logging.info("\n=== Risk Analysis ===")
+        risks = []
+        
+        # Check for mintable token
+        if metadata.get('mint_authority'):
+            risks.append("Token is mintable - supply can be increased")
+            
+        # Check for freezable token
+        if metadata.get('freeze_authority'):
+            risks.append("Token has freeze authority - transfers can be disabled")
+            
+        # Check for low liquidity
+        if liquidity < 50000:
+            risks.append("Low liquidity - high price impact on trades")
+            
+        # Check for high price volatility
+        if abs(price_change_1h) > 20:
+            risks.append(f"High volatility - {abs(price_change_1h):.1f}% price change in 1h")
+            
+        # Check for suspicious trading patterns
+        if buys_1h > 1000 and price_change_1h > 30:
+            risks.append("Potential pump - high buy pressure and price increase")
+        elif sells_1h > 1000 and price_change_1h < -30:
+            risks.append("Potential dump - high sell pressure and price decrease")
+            
+        if risks:
+            for risk in risks:
+                logging.info(f"⚠️ {risk}")
+        else:
+            logging.info("✅ No major risks detected")
         
     except Exception as e:
         logging.error(f"Error in test_audit: {str(e)}", exc_info=True)

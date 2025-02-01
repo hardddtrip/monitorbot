@@ -85,21 +85,21 @@ def fetch_solana_analytics():
 
 ### Fetch Token Price (DexScreener API) ###
 def fetch_token_data(token_address):
-    """Fetch token data from DexScreener API."""
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+    """Fetch token data from DexScreener API"""
     try:
-        print(f"\nFetching token data from: {url}")
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
         response = requests.get(url)
         data = response.json()
-        print(f"DexScreener response: {json.dumps(data, indent=2)}")
-        if "pairs" not in data or len(data["pairs"]) == 0:
-            print("No pairs found in response")
+        
+        if not data or "pairs" not in data or not data["pairs"]:
             return None
-        pair = data["pairs"][0]
-        print(f"\nUsing pair data: {json.dumps(pair, indent=2)}")
-        return pair
+            
+        # Get the pair with the highest liquidity
+        pairs = data["pairs"]
+        pairs.sort(key=lambda x: float(x.get("liquidity", {}).get("usd", 0)), reverse=True)
+        return pairs[0]
+        
     except Exception as e:
-        print(f"Error fetching token data: {str(e)}")
         return None
 
 
@@ -161,6 +161,36 @@ def generate_alert_message(pair):
                f"Avg Sell: ${avg_sell_1h:,.0f}"
 
     return None
+
+### Generate Trade Alert Message ###
+def generate_trade_alert_message(trades):
+    """Generate alert message for recent trades."""
+    if not trades or len(trades) == 0:
+        return None
+
+    message = "*Recent Large Trades*\n"
+    for trade in trades:
+        # Extract trade info
+        amount_usd = trade.get("amount_usd", 0)
+        amount_token = trade.get("amount_token", 0)
+        trade_type = trade.get("type", "").upper()
+        price = trade.get("price_usd", 0)
+        
+        # Skip small trades (less than $1000)
+        if amount_usd < 1000:
+            continue
+            
+        # Add emoji based on trade type
+        emoji = "🟢" if trade_type == "BUY" else "🔴"
+        
+        # Format trade info
+        message += (
+            f"{emoji} {trade_type}: ${amount_usd:,.0f}\n"
+            f"   • Amount: {amount_token:,.0f} tokens\n"
+            f"   • Price: ${price:.6f}\n"
+        )
+
+    return message if len(message) > 20 else None
 
 ### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -500,14 +530,20 @@ async def fetch_recent_trades(token_address, limit=10):
     try:
         print(f"Fetching trades for {token_address}")
         
+        # Get current price for USD conversion
+        pair = fetch_token_data(token_address)
+        if not pair:
+            return None
+        current_price = float(pair.get("priceUsd", 0))
+        
         # Construct API URL
         url = f"{HELIUS_API_URL}/addresses/{token_address}/transactions"
         
         # Set up parameters
         params = {
             "api-key": HELIUS_API_KEY,
-            "type": ["SWAP", "TRANSFER"],  # Include both swaps and transfers
-            "limit": limit
+            "type": ["SWAP"],  # Focus on swaps only for more accurate trade data
+            "limit": limit * 2  # Fetch more to account for filtered transactions
         }
         
         # Make API request
@@ -515,35 +551,50 @@ async def fetch_recent_trades(token_address, limit=10):
         
         if response.status_code != 200:
             print(f"Error fetching trades: {response.status_code}")
-            print(f"Response: {response.text}")
             return None
             
-        data = response.json()
-        trades = []
+        trades_data = response.json()
+        print(f"Found {len(trades_data)} trades")
         
-        for tx in data:
-            trade_info = {
-                "timestamp": tx.get("timestamp", 0),
-                "signature": tx.get("signature", "Unknown"),
-                "description": tx.get("description", "Unknown Trade")
-            }
-            
-            # Add token transfers if available
-            if "tokenTransfers" in tx:
-                for transfer in tx["tokenTransfers"]:
-                    if transfer.get("mint") == token_address:
-                        trade_info["amount"] = float(transfer.get("tokenAmount", 0))
-                        trade_info["from"] = transfer.get("fromUserAccount", "Unknown")
-                        trade_info["to"] = transfer.get("toUserAccount", "Unknown")
-                        break
-            
-            trades.append(trade_info)
-            
-        print(f"Found {len(trades)} trades")
+        trades = []
+        for tx in trades_data:
+            try:
+                # Extract transfer amounts
+                description = tx.get("description", "")
+                if not description or "Swap" not in description:
+                    continue
+                    
+                # Parse amounts from description
+                # Example: "Swap 1000 TOKEN for 5 SOL"
+                parts = description.split()
+                amount_index = parts.index("Swap") + 1
+                amount_token = float(parts[amount_index])
+                
+                # Determine if it's a buy or sell based on token flow
+                is_buy = "for" in description
+                
+                # Calculate USD amount
+                amount_usd = amount_token * current_price
+                
+                trades.append({
+                    "type": "BUY" if is_buy else "SELL",
+                    "amount_token": amount_token,
+                    "amount_usd": amount_usd,
+                    "price_usd": current_price,
+                    "timestamp": tx.get("timestamp", 0)
+                })
+                
+                if len(trades) >= limit:
+                    break
+                    
+            except Exception as e:
+                print(f"Error parsing trade: {str(e)}")
+                continue
+        
         return trades
         
     except Exception as e:
-        print(f"Error fetching trades: {str(e)}")
+        print(f"Error in fetch_recent_trades: {str(e)}")
         return None
 
 async def fetch_liquidity_changes(token_address):
@@ -675,7 +726,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message += f"Decimals: {metadata.get('decimals', 0)}\n"
         
         # Format supply with proper decimals
-        supply = float(metadata.get('supply', '0')) / (10 ** metadata.get('decimals', 0))
+        supply = float(metadata.get('supply', '0')) / (10**metadata.get('decimals', 0))
         message += f"Total Supply: {supply:,.2f}\n"
         
         if metadata.get('description'):
@@ -697,95 +748,139 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.args and len(context.args) > 0:
             token_address = context.args[0]
 
-        logging.info(f"Fetching audit data for token: {token_address}")
-        
         # Fetch both market data and token info
         pair = fetch_token_data(token_address)
-        token_info = fetch_token_info(token_address)
-        
         if not pair:
             await update.message.reply_text("❌ Failed to fetch token data")
             return
 
-        # Original metrics calculation...
+        # Market metrics
+        price_usd = float(pair.get("priceUsd", 0))
+        volume_24h = float(pair.get("volume", {}).get("h24", 0))
+        volume_1h = float(pair.get("volume", {}).get("h1", 0))
+        liquidity = float(pair.get("liquidity", {}).get("usd", 0))
+        market_cap = float(pair.get("marketCap", 0))
+        fdv = float(pair.get("fdv", 0))
         
-        # Add token info section
+        # Price changes
+        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+        price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
+        price_change_7d = float(pair.get("priceChange", {}).get("d7", 0))
+        
+        # Transaction counts
+        txns_24h = pair.get("txns", {}).get("h24", {})
+        txns_1h = pair.get("txns", {}).get("h1", {})
+        buys_24h = int(txns_24h.get("buys", 0))
+        sells_24h = int(txns_24h.get("sells", 0))
+        buys_1h = int(txns_1h.get("buys", 0))
+        sells_1h = int(txns_1h.get("sells", 0))
+
+        # Fetch token metadata and info
+        token_info = fetch_token_info(token_address)
+        if not token_info:
+            token_info = {}  # Use empty dict to avoid NoneType errors
+
+        # Build message sections
+        sections = []
+
+        # Token Information section
         token_info_section = "*Token Information*\n"
-        if token_info:
-            token_info_section += (
-                f"• Name: {token_info['name']}\n"
-                f"• Symbol: {token_info['symbol']}\n"
-                f"• Supply: {float(token_info['supply'])/(10**token_info['decimals']):,.0f}\n"
-                f"• Holders: {token_info['holder_count']:,}\n"
-                f"• Token Standard: {token_info['token_standard']}\n\n"
-                
-                "*Authority Info*\n"
-                f"• Mintable: {'Yes ⚠️' if token_info['mintAuthority'] else 'No ✅'}\n"
-                f"• Freezable: {'Yes ⚠️' if token_info['freezeAuthority'] else 'No ✅'}\n"
-                f"• Update Authority: {token_info['updateAuthority'][:4]}...{token_info['updateAuthority'][-4:]}\n"
-            )
+        token_info_section += (
+            f"• Name: {token_info.get('name', 'Unknown')}\n"
+            f"• Symbol: {token_info.get('symbol', 'Unknown')}\n"
+        )
+        
+        # Only add supply info if available
+        supply = token_info.get('supply')
+        decimals = token_info.get('decimals')
+        if supply is not None and decimals is not None:
+            token_info_section += f"• Supply: {float(supply)/(10**decimals):,.0f}\n"
+        
+        # Add holder count if available
+        holder_count = token_info.get('holder_count')
+        if holder_count is not None:
+            token_info_section += f"• Holders: {holder_count:,}\n"
             
-            # Add Token2022 Extensions if any
-            if token_info['extensions']:
-                token_info_section += "\n*Token Extensions*\n"
-                for ext in token_info['extensions']:
-                    token_info_section += f"• {ext} ⚠️\n"
+        sections.append(token_info_section)
+
+        # Market Metrics section
+        market_section = (
+            "*Market Metrics*\n"
+            f"• Price: ${price_usd:.6f}\n"
+            f"• 24h Volume: ${volume_24h:,.2f}\n"
+            f"• Liquidity: ${liquidity:,.2f}\n"
+            f"• Market Cap: ${market_cap:,.2f}\n"
+            f"• FDV: ${fdv:,.2f}\n"
+        )
+        sections.append(market_section)
+
+        # Price Changes section
+        price_section = (
+            "*Price Changes*\n"
+            f"• 1h: {price_change_1h:+.2f}%\n"
+            f"• 24h: {price_change_24h:+.2f}%\n"
+            f"• 7d: {price_change_7d:+.2f}%\n"
+        )
+        sections.append(price_section)
+
+        # Trading Activity section
+        activity_section = (
+            "*Trading Activity*\n"
+            f"• 24h Buys: {buys_24h}\n"
+            f"• 24h Sells: {sells_24h}\n"
+            f"• 1h Buys: {buys_1h}\n"
+            f"• 1h Sells: {sells_1h}\n"
+        )
+        sections.append(activity_section)
+
+        # Risk Analysis section
+        risks = []
+        
+        # Check for mintable token
+        if token_info.get('is_mintable'):
+            risks.append("Token is mintable - supply can be increased")
             
-            # Add creator info
-            token_info_section += "\n*Creator Information*\n"
-            if token_info['creators']:
-                token_info_section += (
-                    f"• Royalties: {token_info['royalties']}%\n"
-                    f"• Verified Creators: {len(token_info['verified_creators'])}\n"
-                )
-            else:
-                token_info_section += "• No creator information available\n"
+        # Check for freezable token
+        if token_info.get('is_freezable'):
+            risks.append("Token has freeze authority - transfers can be disabled")
             
-            # Add top holders
-            token_info_section += "\n*Top Holders*\n"
-            for idx, holder in enumerate(token_info['largest_holders'], 1):
-                amount = float(holder.get('amount', 0)) / (10**token_info['decimals'])
-                percentage = holder.get('percentage', 0)
-                address = holder.get('owner', '')
-                token_info_section += f"• #{idx}: {address[:4]}...{address[-4:]} ({percentage:.1f}% - {amount:,.0f} tokens)\n"
+        # Check for low liquidity
+        if liquidity < 50000:
+            risks.append("Low liquidity - high price impact on trades")
             
-            # Add collection info if available
-            if token_info.get('collection'):
-                token_info_section += "\n*Collection Info*\n"
-                collection = token_info['collection']
-                token_info_section += (
-                    f"• Name: {collection.get('name', 'N/A')}\n"
-                    f"• Family: {collection.get('family', 'N/A')}\n"
-                )
+        # Check for high price volatility
+        if abs(price_change_1h) > 20:
+            risks.append(f"High volatility - {abs(price_change_1h):.1f}% price change in 1h")
+            
+        # Check for suspicious trading patterns
+        if buys_1h > 1000 and price_change_1h > 30:
+            risks.append("Potential pump - high buy pressure and price increase")
+        elif sells_1h > 1000 and price_change_1h < -30:
+            risks.append("Potential dump - high sell pressure and price decrease")
+
+        risk_section = "*Risk Analysis*\n"
+        if risks:
+            for risk in risks:
+                risk_section += f"⚠️ {risk}\n"
         else:
-            token_info_section += "❌ Token information unavailable\n"
-        
-        # Insert token info section before risk factors
-        audit_message = audit_message.rsplit("*Risk Factors*", 1)[0] if "*Risk Factors*" in audit_message else audit_message
-        audit_message += "\n" + token_info_section
-        
-        if risk_factors:
-            audit_message += "\n*Risk Factors*\n" + "\n".join(risk_factors)
-        
-        # Add LP burn warning if not verified
-        if token_info and token_info['lp_burned'] is None:
-            audit_message += "\n⚠️ LP burn status could not be verified"
-        
-        # Use the escape_md function to properly escape all special characters
-        audit_message = escape_md(audit_message)
-        
-        logging.info("Sending audit message")
-        await update.message.reply_text(audit_message, parse_mode='MarkdownV2')
+            risk_section += "✅ No major risks detected\n"
+        sections.append(risk_section)
+
+        # Combine all sections
+        message = "\n\n".join(sections)
+        await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
         
     except Exception as e:
-        logging.error(f"Error in audit command: {str(e)}", exc_info=True)
-        await update.message.reply_text(f"❌ Error analyzing token data: {str(e)}")
+        print(f"Error in audit command: {str(e)}")
+        await update.message.reply_text("❌ An error occurred while analyzing the token")
 
 def fetch_token_info(token_address):
     """Fetch comprehensive token information from multiple sources"""
     try:
         # Fetch token metadata from Helius
         metadata = fetch_token_metadata(token_address)
+        if not metadata:
+            return None
         
         # Fetch social info and additional data from DexScreener
         url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -802,15 +897,8 @@ def fetch_token_info(token_address):
         
         # Extract social links and info
         info = pair.get("info", {})
-        socials = {social["type"]: social["url"] for social in info.get("socials", [])}
-        websites = [site["url"] for site in info.get("websites", [])]
-        
-        # Fetch Twitter follower count if available
-        twitter_followers = None
-        if "twitter" in socials:
-            twitter_url = socials["twitter"]
-            twitter_handle = twitter_url.split("/")[-1]
-            # Note: You'll need to implement Twitter API integration to get follower count
+        socials = {social["type"]: social["url"] for social in info.get("socials", [])} if info.get("socials") else {}
+        websites = [site["url"] for site in info.get("websites", [])] if info.get("websites") else []
         
         return {
             "name": metadata.get("name"),
@@ -820,16 +908,12 @@ def fetch_token_info(token_address):
             "description": info.get("description"),
             "website": websites[0] if websites else None,
             "twitter": socials.get("twitter"),
-            "twitter_followers": twitter_followers,
-            "tiktok": next((site["url"] for site in info.get("websites", []) if "tiktok" in site["url"]), None),
             "image": info.get("imageUrl"),
             "is_mintable": metadata.get("mintAuthority") is not None,
             "is_freezable": metadata.get("freezeAuthority") is not None,
-            "lp_burned": None  # Would need additional on-chain analysis
         }
         
     except Exception as e:
-        logging.error(f"Error fetching token info: {str(e)}")
         return None
 
 ### Bot Main Function ###
