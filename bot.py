@@ -17,19 +17,17 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Helius API Key
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # Add environment variable
-DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
-DEFAULT_WALLET = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4" 
-WALLET_ADDRESS = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4"
+DEFAULT_TOKEN_ADDRESS = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+DEFAULT_WALLET = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4"
 
-# Ensure tokens exist
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
 if not HELIUS_API_KEY:
     raise ValueError("HELIUS_API_KEY is missing! Set it in your environment variables.")
 
-# Store user-tracked token addresses
-user_addresses = {}
-subscribed_users = {}  # {user_id: expiry_timestamp}
+# Helius API endpoints
+HELIUS_API_URL = "https://api.helius.xyz/v0"
+HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
 
 ### --- MarkdownV2 Escaping Function --- ###
 def escape_md(text):
@@ -39,9 +37,8 @@ def escape_md(text):
 
 
 ### Fetch Recent Solana Transactions (Helius API) ###
-def fetch_solana_transactions(wallet_address, limit=5):
-    """Fetch recent transactions for a wallet using Helius RPC."""
-    HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+def fetch_solana_transactions(wallet_address, limit=10):
+    """Fetch recent transactions for a wallet using enhanced Helius RPC."""
     try:
         payload = {
             "jsonrpc": "2.0",
@@ -50,28 +47,20 @@ def fetch_solana_transactions(wallet_address, limit=5):
             "params": [
                 wallet_address,
                 {
-                    "limit": limit,
-                    "before": "",
-                    "until": ""
+                    "limit": limit
                 }
             ]
         }
         response = requests.post(HELIUS_RPC_URL, json=payload)
+        
         if response.status_code == 200:
             data = response.json()
-            if 'result' in data:
-                return data['result']
+            if "result" in data:
+                return data["result"]
         return None
     except Exception as e:
         print(f"Error fetching transactions: {str(e)}")
         return None
-
-# Example usage:
-transactions = fetch_solana_transactions(WALLET_ADDRESS)
-if transactions:
-    for tx in transactions:
-        print(f"Signature: {tx.get('signature', 'Unknown')}, Slot: {tx.get('slot', 'N/A')}")
-
 
 ### Fetch Solana Analytics (Helius API) ###
 def fetch_solana_analytics():
@@ -124,7 +113,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Telegram command to fetch token price and transaction data."""
     user_id = update.message.chat_id
     wallet_address = DEFAULT_WALLET
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = DEFAULT_TOKEN_ADDRESS
 
     pair = fetch_token_data(token_address)
     transactions = fetch_solana_transactions(wallet_address)
@@ -152,9 +141,9 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Background job to fetch Solana transactions & send alerts to subscribed users."""
-    for user_id in subscribed_users.keys():
+    for user_id in [user_id for user_id in context.application.user_data.keys() if 'subscribed' in context.application.user_data[user_id]]:
         wallet_address = DEFAULT_WALLET
-        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        token_address = DEFAULT_TOKEN_ADDRESS
 
         pair = fetch_token_data(token_address)
         transactions = fetch_solana_transactions(wallet_address)
@@ -183,7 +172,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch token price and market data."""
     user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = DEFAULT_TOKEN_ADDRESS
     pair = fetch_token_data(token_address)
 
     if not pair:
@@ -225,7 +214,7 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     token_address = context.args[0]
-    user_addresses[user_id] = token_address
+    context.application.user_data[user_id] = {'token_address': token_address}
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
 
 
@@ -258,11 +247,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Subscribe to automatic alerts."""
     user_id = update.message.chat_id
-    expiry_time = time.time() + 86400  # 24 hours from now
-    subscribed_users[user_id] = expiry_time
+    context.application.user_data[user_id] = {'subscribed': True}
     
     # Send an immediate alert to confirm subscription
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     pair = fetch_token_data(token_address)
     
     message = "✅ *You have subscribed to alerts for 24 hours!* \n\n"
@@ -276,8 +264,8 @@ async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT
 async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unsubscribe from automatic alerts."""
     user_id = update.message.chat_id
-    if user_id in subscribed_users:
-        del subscribed_users[user_id]
+    if user_id in context.application.user_data and 'subscribed' in context.application.user_data[user_id]:
+        del context.application.user_data[user_id]['subscribed']
         await update.message.reply_text(escape_md("❌ You have unsubscribed from alerts."), parse_mode="MarkdownV2")
     else:
         await update.message.reply_text(escape_md("⚠️ You are not subscribed to alerts."), parse_mode="MarkdownV2")
@@ -286,24 +274,9 @@ async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAU
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
     """Check alerts every 2 minutes for subscribed users."""
     current_time = time.time()
-    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
-
-    # Remove expired subscriptions and notify users
-    for user_id in expired_users:
-        del subscribed_users[user_id]
+    for user_id in [user_id for user_id in context.application.user_data.keys() if 'subscribed' in context.application.user_data[user_id]]:
         try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=escape_md("⏰ Your 24-hour alert subscription has expired. Use /subscribe to enable alerts again."),
-                parse_mode="MarkdownV2"
-            )
-        except Exception as e:
-            print(f"Error notifying user {user_id} about subscription expiry: {str(e)}")
-
-    # Process active subscriptions
-    for user_id in subscribed_users.keys():
-        try:
-            token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+            token_address = context.application.user_data[user_id].get('token_address', DEFAULT_TOKEN_ADDRESS)
             pair = fetch_token_data(token_address)
 
             if pair:
@@ -321,7 +294,6 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
 def fetch_token_metadata(token_address):
     """Enhanced token metadata fetch using paid Helius API features."""
-    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
         url = f"{HELIUS_API_URL}/token-metadata?api-key={HELIUS_API_KEY}"
         payload = {"mintAccounts": [token_address]}
@@ -332,12 +304,12 @@ def fetch_token_metadata(token_address):
             if data and len(data) > 0:
                 metadata = data[0]
                 return {
-                    "name": metadata.get("onChainMetadata", {}).get("metadata", {}).get("name", "Unknown"),
-                    "symbol": metadata.get("onChainMetadata", {}).get("metadata", {}).get("symbol", "Unknown"),
+                    "name": metadata.get("onChainMetadata", {}).get("metadata", {}).get("data", {}).get("name", "Unknown"),
+                    "symbol": metadata.get("onChainMetadata", {}).get("metadata", {}).get("data", {}).get("symbol", "Unknown"),
+                    "decimals": metadata.get("onChainAccountInfo", {}).get("accountInfo", {}).get("data", {}).get("parsed", {}).get("info", {}).get("decimals", 0),
+                    "supply": metadata.get("onChainAccountInfo", {}).get("accountInfo", {}).get("data", {}).get("parsed", {}).get("info", {}).get("supply", "0"),
                     "image": metadata.get("offChainMetadata", {}).get("image", ""),
-                    "description": metadata.get("offChainMetadata", {}).get("description", ""),
-                    "attributes": metadata.get("offChainMetadata", {}).get("attributes", []),
-                    "collection": metadata.get("onChainMetadata", {}).get("metadata", {}).get("collection", {}),
+                    "description": metadata.get("offChainMetadata", {}).get("description", "")
                 }
         return None
     except Exception as e:
@@ -345,64 +317,66 @@ def fetch_token_metadata(token_address):
         return None
 
 def fetch_token_holders(token_address, limit=20):
-    """Enhanced token holders fetch with detailed balance information."""
-    HELIUS_API_URL = f"https://api.helius.xyz/v0"
+    """Enhanced token holders fetch with RPC API."""
     try:
-        url = f"{HELIUS_API_URL}/token-holdings?api-key={HELIUS_API_KEY}"
         payload = {
-            "query": {
-                "tokenAccount": token_address,
-                "limit": limit,
-                "sortBy": "BALANCE",
-                "sortDirection": "DESC"
-            }
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getTokenLargestAccounts",
+            "params": [token_address]
         }
-        response = requests.post(url, json=payload)
+        response = requests.post(HELIUS_RPC_URL, json=payload)
         
         if response.status_code == 200:
             data = response.json()
-            holders = []
-            for holder in data.get("result", []):
-                holders.append({
-                    "owner": holder.get("owner"),
-                    "balance": holder.get("balance"),
-                    "delegated": holder.get("delegate") is not None,
-                    "frozen": holder.get("isFrozen", False)
-                })
-            return holders
+            if "result" in data and "value" in data["result"]:
+                holders = []
+                for holder in data["result"]["value"]:
+                    holders.append({
+                        "address": holder.get("address"),
+                        "amount": holder.get("amount"),
+                        "decimals": holder.get("decimals", 0),
+                        "uiAmount": holder.get("uiAmount", 0)
+                    })
+                return holders[:limit]
         return None
     except Exception as e:
         print(f"Error fetching token holders: {str(e)}")
         return None
 
 def fetch_recent_trades(token_address, limit=10):
-    """Enhanced recent trades fetch with DAS API integration."""
-    HELIUS_API_URL = f"https://api.helius.xyz/v0"
+    """Enhanced recent trades fetch with RPC API."""
     try:
-        url = f"{HELIUS_API_URL}/token-transactions?api-key={HELIUS_API_KEY}"
         payload = {
-            "query": {
-                "tokens": [token_address],
-                "transactionType": ["SWAP"],
-                "limit": limit
-            }
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getSignaturesForAddress",
+            "params": [
+                token_address,
+                {
+                    "limit": limit
+                }
+            ]
         }
-        response = requests.post(url, json=payload)
+        response = requests.post(HELIUS_RPC_URL, json=payload)
         
         if response.status_code == 200:
             data = response.json()
-            trades = []
-            for tx in data.get("result", []):
-                trade_info = {
-                    "signature": tx.get("signature"),
-                    "timestamp": tx.get("timestamp"),
-                    "type": determine_trade_type(tx),
-                    "amount": extract_trade_amount(tx),
-                    "fee": tx.get("fee", 0),
-                    "success": tx.get("success", True)
-                }
-                trades.append(trade_info)
-            return trades
+            if "result" in data:
+                trades = []
+                for tx in data["result"]:
+                    # Get detailed transaction info
+                    tx_details = fetch_transaction_details(tx["signature"])
+                    if tx_details:
+                        trade_info = {
+                            "signature": tx["signature"],
+                            "blockTime": tx["blockTime"],
+                            "type": tx_details.get("type", "unknown"),
+                            "amount": tx_details.get("amount", 0),
+                            "success": tx["err"] is None
+                        }
+                        trades.append(trade_info)
+                return trades
         return None
     except Exception as e:
         print(f"Error fetching recent trades: {str(e)}")
@@ -410,7 +384,6 @@ def fetch_recent_trades(token_address, limit=10):
 
 def fetch_transaction_details(signature):
     """Enhanced transaction details fetch with enriched data."""
-    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
         url = f"{HELIUS_API_URL}/parsed-transaction?api-key={HELIUS_API_KEY}"
         payload = {"transactions": [signature]}
@@ -425,7 +398,6 @@ def fetch_transaction_details(signature):
                     "fee": tx.get("fee"),
                     "status": "success" if tx.get("success") else "failed",
                     "type": tx.get("type", "unknown"),
-                    "instructions": tx.get("instructions", []),
                     "tokenTransfers": tx.get("tokenTransfers", []),
                     "nativeTransfers": tx.get("nativeTransfers", [])
                 }
@@ -436,82 +408,42 @@ def fetch_transaction_details(signature):
 
 def fetch_liquidity_changes(token_address):
     """Enhanced liquidity tracking with detailed pool information."""
-    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
-        url = f"{HELIUS_API_URL}/token-transactions?api-key={HELIUS_API_KEY}"
-        payload = {
-            "query": {
-                "tokens": [token_address],
-                "transactionType": ["SWAP", "ADD_LIQUIDITY", "REMOVE_LIQUIDITY"],
-                "limit": 20
-            }
-        }
-        response = requests.post(url, json=payload)
-        
-        if response.status_code == 200:
-            data = response.json()
-            liquidity_events = []
-            for tx in data.get("result", []):
-                event = {
-                    "timestamp": tx.get("timestamp"),
-                    "type": tx.get("type"),
-                    "signature": tx.get("signature"),
-                    "changes": tx.get("tokenTransfers", []),
-                    "success": tx.get("success", True)
-                }
-                liquidity_events.append(event)
-            return liquidity_events
-        return None
+        # First get token metadata
+        metadata = fetch_token_metadata(token_address)
+        if not metadata:
+            return None
+
+        # Get recent transactions
+        trades = fetch_recent_trades(token_address, 50)
+        if not trades:
+            return None
+
+        liquidity_events = []
+        for trade in trades:
+            if trade["type"] in ["ADD_LIQUIDITY", "REMOVE_LIQUIDITY", "SWAP"]:
+                tx_details = fetch_transaction_details(trade["signature"])
+                if tx_details:
+                    event = {
+                        "timestamp": trade["blockTime"],
+                        "type": trade["type"],
+                        "signature": trade["signature"],
+                        "changes": tx_details.get("tokenTransfers", []),
+                        "success": trade["success"]
+                    }
+                    liquidity_events.append(event)
+
+        return liquidity_events
     except Exception as e:
         print(f"Error fetching liquidity changes: {str(e)}")
         return None
-
-def is_trade_transaction(tx):
-    """Check if transaction is a trade."""
-    if not tx or "meta" not in tx:
-        return False
-    
-    # Check program IDs for common DEX programs
-    for account in tx.get("transaction", {}).get("message", {}).get("accountKeys", []):
-        if account.get("pubkey") in [
-            "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium
-            "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",  # Jupiter
-            "DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1",  # Orca
-        ]:
-            return True
-    return False
-
-def determine_trade_type(tx):
-    """Determine if trade is a buy or sell."""
-    if not tx or "meta" not in tx:
-        return "Unknown"
-    
-    logs = tx["meta"].get("logMessages", [])
-    for log in logs:
-        if "swap" in log.lower():
-            if "in" in log.lower():
-                return "Buy"
-            elif "out" in log.lower():
-                return "Sell"
-    return "Swap"
-
-def extract_trade_amount(tx):
-    """Extract trade amount from transaction."""
-    if not tx or "meta" not in tx:
-        return 0
-    
-    # Look for token balance changes
-    for balance_change in tx["meta"].get("postTokenBalances", []):
-        if balance_change.get("mint") == DEFAULT_TOKEN_ADDRESS:
-            return float(balance_change.get("uiTokenAmount", {}).get("uiAmount", 0))
-    return 0
 
 ### New Telegram Commands ###
 
 async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show top token holders."""
     user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     holders = fetch_token_holders(token_address)
     if not holders:
@@ -520,16 +452,16 @@ async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message = "*👥 Top Token Holders*\n\n"
     for i, holder in enumerate(holders[:10], 1):
-        amount = float(holder.get("balance", 0))
-        percent = float(holder.get("balance", 0))
-        message += f"{i}. `{holder['owner'][:8]}...`: {percent:.2f}% ({amount:,.0f} tokens)\n"
+        amount = float(holder.get("amount", 0)) / (10 ** holder.get("decimals", 0))
+        percent = float(holder.get("amount", 0))
+        message += f"{i}. `{holder['address'][:8]}...`: {percent:.2f}% ({amount:,.2f} tokens)\n"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
 async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show recent large trades."""
     user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     print(f"\n--- Fetching trades for user {user_id} ---")
     print(f"Token address: {token_address}")
@@ -542,7 +474,7 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = "*🔄 Recent Trades*\n\n"
     for trade in trades[:5]:
         sig = trade["signature"]
-        timestamp = datetime.fromtimestamp(trade["timestamp"]/1000).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.fromtimestamp(trade["blockTime"]/1000).strftime("%Y-%m-%d %H:%M:%S")
         amount = trade["amount"]
         trade_type = trade["type"]
         
@@ -556,7 +488,7 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show liquidity changes."""
     user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     liquidity_data = fetch_liquidity_changes(token_address)
     if not liquidity_data:
@@ -583,7 +515,7 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show token metadata."""
     user_id = update.message.chat_id
-    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     print(f"\n--- Fetching metadata for user {user_id} ---")
     print(f"Token address: {token_address}")
