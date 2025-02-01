@@ -81,17 +81,16 @@ class TransactionAnalyzer:
         base_url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions"
         all_transactions = []
         before_tx = None
+        max_iterations = 10  # Limit maximum API calls
+        iteration = 0
         
-        # Try to get enough transactions to cover the time window
-        while True:
-            # Use optimized query parameters:
-            # - commitment=finalized: Get finalized transactions (more per page)
-            # - maxVersion=0: Get only the latest version of transactions
-            url = f"{base_url}?api-key={self.api_key}&commitment=finalized&maxVersion=0"
+        while iteration < max_iterations:
+            # Use optimized query parameters
+            url = f"{base_url}?api-key={self.api_key}&commitment=finalized&maxVersion=0&limit=100"
             if before_tx:
                 url += f"&before={before_tx}"
             
-            print(f"Fetching transactions from Helius API")
+            print(f"Fetching transactions from Helius API (page {iteration + 1}/{max_iterations})")
             response = requests.get(url)
             print(f"API Response Status: {response.status_code}")
             
@@ -113,17 +112,21 @@ class TransactionAnalyzer:
                 break
             
             all_transactions.extend(transactions)
-            before_tx = transactions[-1].get('signature')
             
-            # If we have enough transactions, stop fetching
-            # Assuming max 100 tx/min as a reasonable limit
-            if len(all_transactions) >= minutes * 100:
+            # Stop if we have enough transactions
+            # Assuming max 20 tx/min as a reasonable limit
+            if len(all_transactions) >= minutes * 20:
                 break
             
-            await asyncio.sleep(0.1)  # Rate limiting
+            before_tx = transactions[-1].get('signature')
+            iteration += 1
+            
+            await asyncio.sleep(0.2)  # Increased rate limiting
         
         # Cache the results
-        self._cache_transactions(token_address, all_transactions)
+        if all_transactions:
+            self._cache_transactions(token_address, all_transactions)
+            print(f"Fetched {len(all_transactions)} transactions")
         
         return all_transactions
     
