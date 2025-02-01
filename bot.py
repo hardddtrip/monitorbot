@@ -10,6 +10,7 @@ from telegram.ext import (
     JobQueue,
     CallbackContext
 )
+from datetime import datetime
 
 # Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -236,15 +237,23 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /help is issued."""
     help_text = escape_md(
-        "🤖 Available commands:\n\n"
+        "🤖 *Token Monitor Bot Commands*\n\n"
+        "*Basic Commands:*\n"
         "/start - Start the bot\n"
         "/help - Show this help message\n"
-        "/price - Get token price\n"
-        "/alert - Check for alerts manually\n"
-        "/change <TOKEN_ADDRESS> - Change token address\n"
-        "/subscribe - Enable auto alerts for 24h\n"
-        "/unsubscribe - Disable auto alerts\n"
-        "/ping - Check if bot is alive"
+        "/ping - Check if bot is alive\n\n"
+        "*Price & Alerts:*\n"
+        "/price - Get current token price\n"
+        "/alert - Check alerts manually\n"
+        "/subscribe - Enable auto alerts (24h)\n"
+        "/unsubscribe - Disable auto alerts\n\n"
+        "*Token Analysis:*\n"
+        "/metadata - Show token info\n"
+        "/holders - View top holders\n"
+        "/trades - Recent large trades\n"
+        "/liquidity - Liquidity analysis\n\n"
+        "*Settings:*\n"
+        "/change <TOKEN_ADDRESS> - Change token address"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -312,6 +321,222 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Error sending alert to user {user_id}: {str(e)}")
 
+### Helius API Functions ###
+
+def fetch_token_metadata(token_address):
+    """Fetch detailed token metadata using Helius DAS API."""
+    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "my-id",
+        "method": "getAsset",
+        "params": [token_address]
+    }
+    
+    try:
+        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        if response.status_code == 200:
+            result = response.json().get("result", {})
+            return result
+        print(f"Helius API Error: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        print(f"Error fetching token metadata: {str(e)}")
+        return None
+
+def fetch_token_holders(token_address, limit=20):
+    """Fetch top token holders using Helius API."""
+    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "my-id",
+        "method": "getTokenLargestAccounts",
+        "params": [token_address]
+    }
+    
+    try:
+        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        if response.status_code == 200:
+            result = response.json().get("result", {}).get("value", [])
+            return result[:limit]
+        print(f"Helius API Error: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        print(f"Error fetching token holders: {str(e)}")
+        return None
+
+def fetch_recent_trades(token_address, limit=10):
+    """Fetch recent large trades for a token using Helius API."""
+    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "my-id",
+        "method": "getSignaturesForAddress",
+        "params": [
+            token_address,
+            {
+                "limit": limit,
+                "commitment": "confirmed"
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        if response.status_code == 200:
+            signatures = response.json().get("result", [])
+            
+            # Fetch transaction details for each signature
+            trades = []
+            for sig in signatures:
+                trade = fetch_transaction_details(sig["signature"])
+                if trade:
+                    trades.append(trade)
+            return trades
+        print(f"Helius API Error: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        print(f"Error fetching recent trades: {str(e)}")
+        return None
+
+def fetch_transaction_details(signature):
+    """Fetch detailed transaction information using Helius API."""
+    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
+    
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "my-id",
+        "method": "getTransaction",
+        "params": [
+            signature,
+            {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        if response.status_code == 200:
+            result = response.json().get("result", {})
+            return result
+        print(f"Helius API Error: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        print(f"Error fetching transaction details: {str(e)}")
+        return None
+
+def fetch_liquidity_changes(token_address):
+    """Track liquidity changes for a token using DexScreener and Helius data."""
+    # First get current liquidity from DexScreener
+    pair = fetch_token_data(token_address)
+    current_liquidity = float(pair.get("liquidity", {}).get("usd", 0)) if pair else 0
+    
+    # Then get recent transactions to analyze liquidity changes
+    trades = fetch_recent_trades(token_address, limit=50)
+    liquidity_events = []
+    
+    if trades:
+        for trade in trades:
+            # Analyze transaction for liquidity events
+            if "meta" in trade and "logMessages" in trade["meta"]:
+                messages = trade["meta"]["logMessages"]
+                for msg in messages:
+                    if "liquidity" in msg.lower():
+                        liquidity_events.append({
+                            "signature": trade["transaction"]["signatures"][0],
+                            "timestamp": trade["blockTime"],
+                            "message": msg
+                        })
+    
+    return {
+        "current_liquidity": current_liquidity,
+        "recent_events": liquidity_events[:10]  # Return most recent 10 events
+    }
+
+### New Telegram Commands ###
+
+async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show top token holders."""
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    
+    holders = fetch_token_holders(token_address)
+    if not holders:
+        await update.message.reply_text(escape_md("⚠️ Could not fetch holder data."), parse_mode="MarkdownV2")
+        return
+    
+    message = "*👥 Top Token Holders*\n\n"
+    for i, holder in enumerate(holders[:10], 1):
+        amount = float(holder.get("amount", 0))
+        percent = float(holder.get("uiAmount", 0))
+        message += f"{i}. `{holder['address'][:8]}...`: {percent:.2f}% ({amount:,.0f} tokens)\n"
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+
+async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show recent large trades."""
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    
+    trades = fetch_recent_trades(token_address)
+    if not trades:
+        await update.message.reply_text(escape_md("⚠️ Could not fetch trade data."), parse_mode="MarkdownV2")
+        return
+    
+    message = "*🔄 Recent Large Trades*\n\n"
+    for trade in trades[:5]:
+        sig = trade["transaction"]["signatures"][0]
+        timestamp = datetime.fromtimestamp(trade["blockTime"]).strftime("%Y-%m-%d %H:%M:%S")
+        message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
+        message += f"📅 {timestamp}\n\n"
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+
+async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show liquidity changes."""
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    
+    liquidity_data = fetch_liquidity_changes(token_address)
+    if not liquidity_data:
+        await update.message.reply_text(escape_md("⚠️ Could not fetch liquidity data."), parse_mode="MarkdownV2")
+        return
+    
+    message = "*💧 Liquidity Analysis*\n\n"
+    message += f"Current Liquidity: ${liquidity_data['current_liquidity']:,.2f}\n\n"
+    message += "*Recent Events:*\n"
+    
+    for event in liquidity_data["recent_events"]:
+        timestamp = datetime.fromtimestamp(event["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        sig = event["signature"]
+        message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
+        message += f"📅 {timestamp}\n\n"
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+
+async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show token metadata."""
+    user_id = update.message.chat_id
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    
+    metadata = fetch_token_metadata(token_address)
+    if not metadata:
+        await update.message.reply_text(escape_md("⚠️ Could not fetch token metadata."), parse_mode="MarkdownV2")
+        return
+    
+    message = "*ℹ️ Token Metadata*\n\n"
+    message += f"Name: {metadata.get('name', 'Unknown')}\n"
+    message += f"Symbol: {metadata.get('symbol', 'Unknown')}\n"
+    message += f"Decimals: {metadata.get('decimals', 'Unknown')}\n"
+    
+    if "supply" in metadata:
+        supply = float(metadata["supply"])
+        message += f"Total Supply: {supply:,.0f}\n"
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+
 ### Bot Main Function ###
 def main():
     """Run the Telegram bot."""
@@ -328,6 +553,10 @@ def main():
         app.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
         app.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
         app.add_handler(CommandHandler("ping", ping_command))
+        app.add_handler(CommandHandler("holders", holders_command))
+        app.add_handler(CommandHandler("trades", trades_command))
+        app.add_handler(CommandHandler("liquidity", liquidity_command))
+        app.add_handler(CommandHandler("metadata", metadata_command))
 
         # Add error handler
         app.add_error_handler(error_handler)
