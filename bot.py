@@ -1101,36 +1101,13 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message += f"• Failed Transactions: {patterns['failed']}\n\n"
     
     message += f"*Risk Metrics*:\n"
-    summary = analysis['risk_metrics']
-    message += f"• Bot Activity: {summary['bot_activity']}%\n"
-    message += f"• Wash Trading: {summary['wash_trading']}%\n"
-    message += f"• Failed Tx Ratio: {summary['failed_tx_ratio']}%\n"
-    message += f"• Large Trade Ratio: {summary['large_trade_ratio']}%\n\n"
+    risk = analysis['risk_metrics']
+    message += f"• Bot Activity: {risk['bot_activity']}%\n"
+    message += f"• Wash Trading: {risk['wash_trading']}%\n"
+    message += f"• Failed Tx Ratio: {risk['failed_tx_ratio']}%\n"
+    message += f"• Large Trade Ratio: {risk['large_trade_ratio']}%\n"
     
-    if analysis['suspicious_wallets']:
-        message += f"*Suspicious Wallets*:\n"
-        for wallet, count in list(analysis['suspicious_wallets'].items())[:5]:  # Show top 5
-            message += f"• `{wallet[:8]}...`: {count} txs\n"
-        message += "\n"
-        
-    if analysis['suspicious_pairs']:
-        message += f"*Suspicious Trading Pairs*:\n"
-        for pair, count in list(analysis['suspicious_pairs'].items())[:3]:  # Show top 3
-            w1, w2 = pair.split(":")
-            message += f"• `{w1[:6]}..` ↔️ `{w2[-6:]}`: {count} interactions\n"
-        message += "\n"
-        
-    if analysis['unusual_activity']:
-        message += f"*Unusual Activity*:\n"
-        for activity in analysis['unusual_activity'][:5]:  # Show top 5
-            wallet = activity['wallet']
-            message += f"• {activity['type']}: {activity.get('amount') or activity.get('fee')} "
-            message += f"(`{wallet[:6]}...{wallet[-4:]}`)\n"
-            
-    await update.message.reply_text(
-        message,
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
 ### Bot Main Function ###
 def main():
