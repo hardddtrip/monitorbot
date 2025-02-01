@@ -1005,24 +1005,31 @@ def main():
         time.sleep(10)  
         sys.exit(1)
 
-def error_handler(update: Update, context: CallbackContext) -> None:
-    """Handle errors in the telegram bot."""
+def error_handler(update: Update | None, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to notify the developer."""
+    # Log the error before we do anything else, so we can see it even if something breaks.
+    logger.error("Exception while handling an update:", exc_info=context.error)
+
+    # Don't try to send messages if update is None
+    if update is None:
+        return
+
+    # Extract the error message
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+    
+    # Build the message with escaped characters
+    message = (
+        f"An exception was raised while handling an update\n"
+        f"update = {escape_md(str(update))}\n"
+        f"error = {escape_md(str(context.error))}"
+    )
+    
+    # Send the message
     try:
-        if isinstance(context.error, telegram.error.Conflict):
-            print("Conflict error: Another instance is running")
-            return  
-            
-        if isinstance(context.error, telegram.error.TimedOut):
-            print("Request timed out. Will retry automatically.")
-            return  
-            
-        if update:
-            print(f"Update {update.update_id} caused error: {context.error}")
-        else:
-            print(f"Error without update: {context.error}")
-            
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
-        print(f"Error in error handler: {e}")
+        logger.error(f"Failed to send error message: {e}")
 
 if __name__ == "__main__":
     main()
