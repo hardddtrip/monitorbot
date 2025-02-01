@@ -944,11 +944,6 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     for wallet, count in suspicious.items():
         message += f"• `{wallet[:8]}...`: {count} transactions\n"
     
-    message += f"*Recent Transactions*:\n"
-    recent = analysis['recent_transactions']
-    for tx in recent:
-        message += f"• `{tx['source'][:8]}...`: {tx['amount']:.2f} tokens\n"
-    
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
 ### Bot Main Function ###
