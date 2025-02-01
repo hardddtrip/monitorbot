@@ -228,6 +228,11 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
 
+##Start##
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /start command to greet users."""
+    await update.message.reply_text("Hello! I will notify you about token activity.")
+
 ### 🔹 Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
