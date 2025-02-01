@@ -4,26 +4,94 @@ import statistics
 from datetime import datetime
 import requests
 import asyncio
+import json
+from collections import defaultdict
 
 class TransactionAnalyzer:
+    # Static cache for all instances
+    CACHE_TTL = 60  # Cache TTL in seconds
+    CACHE_DIR = "/tmp/transaction_cache"
+    
     def __init__(self, helius_api_key=None):
         """Initialize the transaction analyzer with optional API key."""
         self.api_key = helius_api_key or os.getenv("HELIUS_API_KEY")
         if not self.api_key:
             raise ValueError("Missing HELIUS_API_KEY")
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(self.CACHE_DIR, exist_ok=True)
     
-    async def fetch_transactions(self, token_address, minutes=5, max_pages=5):
-        """Fetch transactions from Helius API with pagination."""
+    def _get_cache_path(self, token_address):
+        """Get cache file path for a token address."""
+        return os.path.join(self.CACHE_DIR, f"{token_address}.json")
+    
+    def _get_cached_transactions(self, token_address, cutoff_time):
+        """Get cached transactions that are still valid."""
+        cache_path = self._get_cache_path(token_address)
+        if not os.path.exists(cache_path):
+            return None
+            
+        # Check if cache is expired
+        if time.time() - os.path.getmtime(cache_path) > self.CACHE_TTL:
+            os.remove(cache_path)
+            return None
+            
+        try:
+            with open(cache_path, 'r') as f:
+                cached_data = json.load(f)
+                
+            # Filter transactions by time
+            cached_txs = [tx for tx in cached_data 
+                         if self._get_tx_time(tx) >= cutoff_time]
+            if cached_txs:
+                print("Using cached transactions")
+                return cached_txs
+        except Exception as e:
+            print(f"Error reading cache: {e}")
+            
+        return None
+    
+    def _cache_transactions(self, token_address, transactions):
+        """Cache transactions for future use."""
+        cache_path = self._get_cache_path(token_address)
+        try:
+            with open(cache_path, 'w') as f:
+                json.dump(transactions, f)
+        except Exception as e:
+            print(f"Error writing cache: {e}")
+    
+    @staticmethod
+    def _get_tx_time(tx):
+        """Get transaction timestamp in seconds."""
+        tx_time = tx.get('timestamp', 0)
+        if tx_time > 1600000000000:  # If timestamp is in milliseconds
+            tx_time = tx_time / 1000
+        return tx_time
+    
+    async def fetch_transactions(self, token_address, minutes=5):
+        """Fetch transactions from Helius API with caching and optimizations."""
+        cutoff_time = time.time() - (minutes * 60)
+        
+        # Check cache first
+        cached_txs = self._get_cached_transactions(token_address, cutoff_time)
+        if cached_txs:
+            print("Using cached transactions")
+            return cached_txs
+        
         base_url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions"
         all_transactions = []
         before_tx = None
         
-        for page in range(max_pages):
-            url = f"{base_url}?api-key={self.api_key}"
+        # Try to get enough transactions to cover the time window
+        while True:
+            # Use optimized query parameters:
+            # - commitment=finalized: Get finalized transactions (more per page)
+            # - maxVersion=0: Get only the latest version of transactions
+            url = f"{base_url}?api-key={self.api_key}&commitment=finalized&maxVersion=0"
             if before_tx:
                 url += f"&before={before_tx}"
-            print(f"Fetching transactions page {page + 1} from Helius API")
             
+            print(f"Fetching transactions from Helius API")
             response = requests.get(url)
             print(f"API Response Status: {response.status_code}")
             
@@ -34,13 +102,28 @@ class TransactionAnalyzer:
             transactions = response.json()
             if not transactions:
                 break
-                
-            all_transactions.extend(transactions)
             
-            if transactions:
-                before_tx = transactions[-1].get('signature')
+            # Check the last transaction's time
+            last_tx_time = self._get_tx_time(transactions[-1])
+            if last_tx_time < cutoff_time:
+                # Add only transactions within our time window
+                valid_txs = [tx for tx in transactions 
+                           if self._get_tx_time(tx) >= cutoff_time]
+                all_transactions.extend(valid_txs)
+                break
+            
+            all_transactions.extend(transactions)
+            before_tx = transactions[-1].get('signature')
+            
+            # If we have enough transactions, stop fetching
+            # Assuming max 100 tx/min as a reasonable limit
+            if len(all_transactions) >= minutes * 100:
+                break
             
             await asyncio.sleep(0.1)  # Rate limiting
+        
+        # Cache the results
+        self._cache_transactions(token_address, all_transactions)
         
         return all_transactions
     
@@ -64,37 +147,124 @@ class TransactionAnalyzer:
         
         return filtered_txs
     
+    def _get_token_price(self, token_address):
+        """Get current token price in USD from DexScreener."""
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+            response = requests.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('pairs'):
+                    # Get the first Solana pair
+                    for pair in data['pairs']:
+                        if pair.get('chainId') == 'solana':
+                            return float(pair.get('priceUsd', 0))
+            return 0
+        except Exception as e:
+            print(f"Error fetching token price: {e}")
+            return 0
+
+    def _get_transaction_value(self, tx, token_address):
+        """Get the SOL or USD value from the transaction."""
+        amount = 0
+        is_sol_value = False
+        token_transfers = tx.get('tokenTransfers', [])
+        native_transfers = tx.get('nativeTransfers', [])
+
+        # Check if it's a swap
+        if tx.get('type') == 'SWAP':
+            token_amount = 0
+            sol_amount = 0
+            other_token_amount = 0
+            other_token_mint = None
+
+            # Get token amount
+            for transfer in token_transfers:
+                if transfer.get('mint') == token_address:
+                    token_amount = abs(float(transfer.get('tokenAmount', 0)))
+                else:
+                    other_token_amount = abs(float(transfer.get('tokenAmount', 0)))
+                    other_token_mint = transfer.get('mint')
+
+            # Check for SOL transfers
+            for transfer in native_transfers:
+                sol_amount += abs(float(transfer.get('amount', 0))) / 1e9  # Convert lamports to SOL
+
+            if sol_amount > 0:
+                amount = sol_amount
+                is_sol_value = True
+            elif other_token_amount > 0 and other_token_mint:
+                # TODO: If needed, we could add USDC/USDT detection here
+                amount = token_amount
+                is_sol_value = False
+
+        # Check for direct SOL transfers
+        elif native_transfers:
+            total_sol = sum(abs(float(transfer.get('amount', 0))) for transfer in native_transfers) / 1e9
+            if total_sol > 0:
+                amount = total_sol
+                is_sol_value = True
+
+        # Check for token transfers
+        else:
+            for transfer in token_transfers:
+                if transfer.get('mint') == token_address:
+                    amount = abs(float(transfer.get('tokenAmount', 0)))
+                    break
+
+        return amount, is_sol_value
+
     def _analyze_volume_patterns(self, tx, token_address, patterns, volume_by_type, volume_distribution):
         """Analyze volume-related patterns in a transaction."""
-        amount = 0
-        token_transfers = tx.get('tokenTransfers', [])
-        
-        for transfer in token_transfers:
-            if transfer.get('mint') == token_address:
-                amount = abs(float(transfer.get('tokenAmount', 0)))
-                break
+        amount, is_sol_value = self._get_transaction_value(tx, token_address)
         
         if amount > 0:
             # Track volume by type
-            if tx.get('type', '') == 'SWAP':
-                volume_by_type['swaps'] += amount
+            tx_type = tx.get('type', '')
+            if tx_type == 'SWAP':
+                volume_by_type['swaps']['amount'] += amount
+                volume_by_type['swaps']['count'] += 1
             elif 'transfer' in tx.get('description', '').lower():
-                volume_by_type['transfers'] += amount
+                volume_by_type['transfers']['amount'] += amount
+                volume_by_type['transfers']['count'] += 1
             
-            # Track volume distribution
-            if amount < 10:
-                volume_distribution['very_small'] += 1
-            elif amount < 100:
-                volume_distribution['small'] += 1
-            elif amount < 1000:
-                volume_distribution['medium'] += 1
-            elif amount < 10000:
-                volume_distribution['large'] += 1
+            # Track volume distribution based on SOL value
+            if is_sol_value:
+                if amount < 0.1:  # < 0.1 SOL
+                    volume_distribution['very_small']['count'] += 1
+                    volume_distribution['very_small']['amount'] += amount
+                elif amount < 1:  # 0.1 - 1 SOL
+                    volume_distribution['small']['count'] += 1
+                    volume_distribution['small']['amount'] += amount
+                elif amount < 10:  # 1 - 10 SOL
+                    volume_distribution['medium']['count'] += 1
+                    volume_distribution['medium']['amount'] += amount
+                elif amount < 100:  # 10 - 100 SOL
+                    volume_distribution['large']['count'] += 1
+                    volume_distribution['large']['amount'] += amount
+                else:  # > 100 SOL
+                    volume_distribution['very_large']['count'] += 1
+                    volume_distribution['very_large']['amount'] += amount
             else:
-                volume_distribution['very_large'] += 1
+                # Fallback to token amounts if no SOL value
+                if amount < 100:
+                    volume_distribution['very_small']['count'] += 1
+                    volume_distribution['very_small']['amount'] += amount
+                elif amount < 1000:
+                    volume_distribution['small']['count'] += 1
+                    volume_distribution['small']['amount'] += amount
+                elif amount < 10000:
+                    volume_distribution['medium']['count'] += 1
+                    volume_distribution['medium']['amount'] += amount
+                elif amount < 100000:
+                    volume_distribution['large']['count'] += 1
+                    volume_distribution['large']['amount'] += amount
+                else:
+                    volume_distribution['very_large']['count'] += 1
+                    volume_distribution['very_large']['amount'] += amount
         
-        return amount
-    
+        return amount, is_sol_value
+
     def _analyze_price_impact(self, tx, token_address, price_points, volume_by_type, patterns, amount):
         """Analyze price impact and slippage."""
         if tx.get('type', '') == 'SWAP' and len(tx.get('tokenTransfers', [])) >= 2:
@@ -116,8 +286,10 @@ class TransactionAnalyzer:
                         prev_price = price_points[-2][1]
                         price_impact = abs(price - prev_price) / prev_price
                         if price_impact > 0.05:  # 5% slippage
-                            patterns['high_slippage'] += 1
-                            volume_by_type['high_slippage'] += amount
+                            patterns['high_slippage']['count'] += 1
+                            patterns['high_slippage']['amount'] += amount
+                            volume_by_type['high_slippage']['amount'] += amount
+                            volume_by_type['high_slippage']['count'] += 1
             except Exception as e:
                 print(f"Error calculating price: {str(e)}")
     
@@ -128,167 +300,199 @@ class TransactionAnalyzer:
             mint = transfer.get('mint')
             amt = float(transfer.get('tokenAmount', 0))
             if mint in token_in_out and abs(token_in_out[mint] + amt) < 0.01:
-                patterns['flash_loans'] += 1
-                volume_by_type['flash_loans'] += amount
+                patterns['flash_loans']['count'] += 1
+                patterns['flash_loans']['amount'] += amount
+                volume_by_type['flash_loans']['amount'] += amount
+                volume_by_type['flash_loans']['count'] += 1
                 break
             token_in_out[mint] = token_in_out.get(mint, 0) - amt
     
+    def _categorize_trader(self, tx_history):
+        """Categorize trader based on their transaction history."""
+        total_volume = sum(tx['amount'] for tx in tx_history)
+        avg_time_between_trades = 0
+        if len(tx_history) > 1:
+            times = [tx['timestamp'] for tx in tx_history]
+            times.sort()
+            time_diffs = [times[i+1] - times[i] for i in range(len(times)-1)]
+            avg_time_between_trades = sum(time_diffs) / len(time_diffs)
+
+        # Count specific patterns
+        rapid_trades = sum(1 for tx in tx_history if tx.get('is_rapid', False))
+        flash_loans = sum(1 for tx in tx_history if tx.get('is_flash_loan', False))
+        high_slippage = sum(1 for tx in tx_history if tx.get('is_high_slippage', False))
+        large_trades = sum(1 for tx in tx_history if tx['amount'] > 10)  # >10 SOL
+
+        # Market Maker characteristics
+        if len(tx_history) > 50 and avg_time_between_trades < 60:
+            if rapid_trades / len(tx_history) > 0.8:
+                return "market_making_bot"
+            return "large_market_maker"
+
+        # Sniper Bot characteristics
+        if rapid_trades > 0 and flash_loans > 0 and high_slippage / len(tx_history) > 0.3:
+            return "sniper_bot"
+
+        # Whale characteristics
+        if total_volume > 100 and large_trades / len(tx_history) > 0.5:
+            return "whale"
+
+        # Default to retail
+        return "retail"
+
     async def analyze_transactions(self, token_address, minutes=5):
         """Main method to analyze transactions."""
         try:
-            # Fetch and filter transactions
+            # Initialize metrics
+            trader_categories = {
+                'large_market_maker': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
+                'market_making_bot': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
+                'sniper_bot': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
+                'whale': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
+                'retail': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []}
+            }
+            
+            # Track wallet history and price points
+            wallet_history = defaultdict(list)
+            price_points = []
+            volume_distribution = {
+                'very_small': {'count': 0, 'amount': 0},  # < 0.1 SOL
+                'small': {'count': 0, 'amount': 0},       # 0.1 - 1 SOL
+                'medium': {'count': 0, 'amount': 0},      # 1 - 10 SOL
+                'large': {'count': 0, 'amount': 0},       # 10 - 100 SOL
+                'very_large': {'count': 0, 'amount': 0}   # > 100 SOL
+            }
+            
+            # Fetch and process transactions
             transactions = await self.fetch_transactions(token_address, minutes)
-            transactions = self._filter_transactions_by_time(transactions, minutes)
             
             if not transactions:
                 return None
             
-            # Initialize metrics
-            transaction_count = len(transactions)
-            active_wallets = set()
-            total_volume = 0
-            volume_by_type = {'swaps': 0, 'transfers': 0, 'flash_loans': 0, 'high_slippage': 0, 'bot_trades': 0}
-            patterns = {
-                'swaps': 0, 'transfers': 0, 'large_transfers': 0, 'multi_transfers': 0,
-                'failed': 0, 'rapid_swaps': 0, 'wash_trades': 0, 'sandwich_attacks': 0,
-                'flash_loans': 0, 'high_slippage': 0, 'arbitrage': 0, 'bot_trades': 0
-            }
-            volume_distribution = {
-                'very_small': 0, 'small': 0, 'medium': 0, 'large': 0, 'very_large': 0
-            }
-            
-            # Analysis state
-            wallet_interactions = {}
-            wallet_tx_counts = {}
-            wallet_last_swap = {}
-            large_swaps = []
-            price_points = []
-            recent_transactions = []
-            
-            # Process each transaction
+            # First pass: collect wallet history
             for tx in transactions:
-                source = tx.get('feePayer', '')
-                active_wallets.add(source)
+                # Get the actual wallet address from the transaction
+                source = None
                 
-                # Analyze volume and patterns
-                amount = self._analyze_volume_patterns(tx, token_address, patterns, volume_by_type, volume_distribution)
-                total_volume += amount
+                # Try to get the wallet from native transfers first
+                for transfer in tx.get('nativeTransfers', []):
+                    if transfer.get('fromUserAccount'):
+                        source = transfer['fromUserAccount']
+                        break
                 
-                # Analyze price impact
-                self._analyze_price_impact(tx, token_address, price_points, volume_by_type, patterns, amount)
+                # If no native transfer, try token transfers
+                if not source:
+                    for transfer in tx.get('tokenTransfers', []):
+                        if transfer.get('fromUserAccount'):
+                            source = transfer['fromUserAccount']
+                            break
                 
-                # Detect flash loans
-                self._detect_flash_loans(tx, tx.get('tokenTransfers', []), patterns, volume_by_type, amount)
+                # If still no source, try account data
+                if not source:
+                    for account in tx.get('accountData', []):
+                        if account.get('owner') and not account['owner'].startswith('Jupiter'):
+                            source = account['owner']
+                            break
                 
-                # Track bot trading
-                if tx.get('type', '') == 'SWAP':
-                    patterns['swaps'] += 1
-                    if source in wallet_last_swap:
-                        time_since_last = tx['timestamp'] - wallet_last_swap[source]
-                        if time_since_last < 60:
-                            patterns['rapid_swaps'] += 1
-                            if time_since_last < 3:
-                                patterns['bot_trades'] += 1
-                                volume_by_type['bot_trades'] += amount
-                    wallet_last_swap[source] = tx['timestamp']
+                # Last resort: use source field
+                if not source:
+                    source = tx.get('source', 'unknown')
                 
-                # Track other patterns
-                if len(tx.get('tokenTransfers', [])) > 2:
-                    patterns['multi_transfers'] += 1
-                    if len(set(t.get('mint') for t in tx.get('tokenTransfers', []))) > 2:
-                        patterns['arbitrage'] += 1
+                amount, is_sol_value = self._get_transaction_value(tx, token_address)
                 
-                if amount > 1000:
-                    patterns['large_transfers'] += 1
-                    large_swaps.append({'timestamp': tx['timestamp'], 'amount': amount, 'source': source})
+                # Determine if buy or sell
+                is_buy = False
+                token_transfers = tx.get('tokenTransfers', [])
+                for transfer in token_transfers:
+                    if transfer.get('mint') == token_address:
+                        is_buy = float(transfer.get('tokenAmount', 0)) > 0
+                        break
                 
-                # Track wallet activity
-                if source not in wallet_interactions:
-                    wallet_interactions[source] = []
-                wallet_interactions[source].append({
+                # Track transaction info
+                tx_info = {
                     'timestamp': tx['timestamp'],
                     'amount': amount,
-                    'type': tx.get('type', '')
-                })
-                wallet_tx_counts[source] = wallet_tx_counts.get(source, 0) + 1
+                    'is_buy': is_buy,
+                    'is_rapid': False,
+                    'is_flash_loan': False,
+                    'is_high_slippage': False,
+                    'wallet': source
+                }
                 
-                # Track recent transactions
-                recent_transactions.append({
-                    'type': tx.get('type', '').lower(),
-                    'description': tx.get('description', ''),
-                    'amount': amount,
-                    'timestamp': tx['timestamp'],
-                    'source': source,
-                    'success': tx.get('transactionError') is None
-                })
+                # Check for patterns
+                if source in wallet_history:
+                    last_tx = wallet_history[source][-1]
+                    if tx['timestamp'] - last_tx['timestamp'] < 60:
+                        tx_info['is_rapid'] = True
+                
+                if len(tx.get('tokenTransfers', [])) >= 2:
+                    token_in_out = {}
+                    for transfer in tx.get('tokenTransfers', []):
+                        mint = transfer.get('mint')
+                        amt = float(transfer.get('tokenAmount', 0))
+                        if mint in token_in_out and abs(token_in_out[mint] + amt) < 0.01:
+                            tx_info['is_flash_loan'] = True
+                            break
+                        token_in_out[mint] = token_in_out.get(mint, 0) - amt
+                
+                try:
+                    if tx.get('type') == 'SWAP' and len(tx.get('tokenTransfers', [])) >= 2:
+                        price = amount / float(token_transfers[0].get('tokenAmount', 1))
+                        if len(price_points) > 1:
+                            prev_price = price_points[-1][1]
+                            price_impact = abs(price - prev_price) / prev_price
+                            if price_impact > 0.05:  # 5% slippage
+                                tx_info['is_high_slippage'] = True
+                except Exception:
+                    pass
+                
+                wallet_history[source].append(tx_info)
             
-            # Post-process analysis
-            recent_transactions.sort(key=lambda x: x['timestamp'], reverse=True)
+            # Second pass: categorize traders and aggregate metrics
+            suspicious_wallets = {}
+            for wallet, history in wallet_history.items():
+                category = self._categorize_trader(history)
+                trader_categories[category]['count'] += 1
+                trader_categories[category]['transactions'].extend(history)
+                
+                for tx in history:
+                    trader_categories[category]['volume'] += tx['amount']
+                    if tx['is_buy']:
+                        trader_categories[category]['buys'] += tx['amount']
+                    else:
+                        trader_categories[category]['sells'] += tx['amount']
+                    
+                    # Track volume distribution
+                    amount = tx['amount']
+                    if amount < 0.1:
+                        volume_distribution['very_small']['count'] += 1
+                        volume_distribution['very_small']['amount'] += amount
+                    elif amount < 1:
+                        volume_distribution['small']['count'] += 1
+                        volume_distribution['small']['amount'] += amount
+                    elif amount < 10:
+                        volume_distribution['medium']['count'] += 1
+                        volume_distribution['medium']['amount'] += amount
+                    elif amount < 100:
+                        volume_distribution['large']['count'] += 1
+                        volume_distribution['large']['amount'] += amount
+                    else:
+                        volume_distribution['very_large']['count'] += 1
+                        volume_distribution['very_large']['amount'] += amount
+                
+                if len(history) >= 3:
+                    suspicious_wallets[wallet] = len(history)
             
-            # Detect sandwich attacks
-            if len(large_swaps) >= 2:
-                for i in range(len(large_swaps) - 1):
-                    if large_swaps[i+1]['timestamp'] - large_swaps[i]['timestamp'] < 60:
-                        patterns['sandwich_attacks'] += 1
-            
-            # Detect wash trading
-            for wallet, txs in wallet_interactions.items():
-                if len(txs) >= 3 and txs[-1]['timestamp'] - txs[0]['timestamp'] < 300:
-                    patterns['wash_trades'] += 1
-            
-            # Calculate metrics
-            trading_velocity = transaction_count / minutes
-            suspicious_wallets = dict(sorted(wallet_tx_counts.items(), key=lambda x: x[1], reverse=True)[:5])
-            
-            # Calculate price metrics
-            price_metrics = {}
-            if price_points:
-                price_points.sort(key=lambda x: x[0])
-                prices = [p[1] for p in price_points]
-                price_metrics = {
-                    'start_price': price_points[0][1],
-                    'end_price': price_points[-1][1],
-                    'price_change_pct': ((price_points[-1][1] - price_points[0][1]) / price_points[0][1]) * 100,
-                    'volatility': statistics.stdev(prices) if len(prices) > 1 else 0,
-                    'min_price': min(prices),
-                    'max_price': max(prices)
-                }
-            
-            # Calculate pattern metrics
-            pattern_metrics = {
-                'volume_distribution': {
-                    k: {'count': v, 'percentage': (v / transaction_count * 100) if transaction_count > 0 else 0}
-                    for k, v in volume_distribution.items()
-                },
-                'volume_by_type': {
-                    k: {'amount': v, 'percentage': (v / total_volume * 100) if total_volume > 0 else 0}
-                    for k, v in volume_by_type.items()
-                },
-                'pattern_percentages': {
-                    k: {'count': v, 'percentage': (v / transaction_count * 100) if transaction_count > 0 else 0}
-                    for k, v in patterns.items()
-                }
-            }
-            
-            # Calculate market impact
-            market_impact = {
-                'avg_trade_size': total_volume / transaction_count if transaction_count > 0 else 0,
-                'large_tx_impact': sum(1 for tx in transactions if tx.get('amount', 0) > 1000) / transaction_count * 100 if transaction_count > 0 else 0,
-                'bot_volume_pct': volume_by_type['bot_trades'] / total_volume * 100 if total_volume > 0 else 0,
-                'flash_loan_volume_pct': volume_by_type['flash_loans'] / total_volume * 100 if total_volume > 0 else 0
-            }
+            suspicious_wallets = dict(sorted(suspicious_wallets.items(), key=lambda x: x[1], reverse=True)[:10])
             
             return {
-                'transaction_count': transaction_count,
-                'active_wallets': len(active_wallets),
-                'trading_velocity': trading_velocity,
-                'total_volume': total_volume,
-                'patterns': patterns,
+                'transaction_count': len(transactions),
+                'active_wallets': len(wallet_history),
+                'trading_velocity': len(transactions) / minutes,
+                'total_volume': sum(cat['volume'] for cat in trader_categories.values()),
+                'trader_categories': trader_categories,
                 'suspicious_wallets': suspicious_wallets,
-                'recent_transactions': recent_transactions[:5],
-                'price_metrics': price_metrics,
-                'pattern_metrics': pattern_metrics,
-                'market_impact': market_impact
+                'volume_distribution': volume_distribution
             }
             
         except Exception as e:
