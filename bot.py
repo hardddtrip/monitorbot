@@ -94,14 +94,19 @@ def generate_alert_message(pair):
     liquidity = float(pair["liquidity"]["usd"])
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
-    if price_usd > 1.2 * price_change_1h:
+    # Pump alert: Price increased by more than 20% in 1h
+    if price_change_1h > 20:
         return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    # Retail arrival: High number of buys but low volume
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
         return "🛍 *Retail Arrival Detected!*"
+    # Market maker: High liquidity and volume
     elif liquidity > 2000000 and volume_24h > 5000000:
         return "🔄 *Market Maker Transfer!* 📊"
-    elif price_usd < 0.8 * price_change_1h:
+    # Dump alert: Price decreased by more than 20% in 1h
+    elif price_change_1h < -20:
         return "⚠️ *Dump Alert!* 💥"
+    # Capitulation: High number of sells with low volume
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
         return "💀 *Retail Capitulation!* 🏳️"
     return None
