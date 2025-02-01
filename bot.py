@@ -74,12 +74,18 @@ def fetch_token_data(token_address):
     """Fetch token data from DexScreener API."""
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     try:
+        print(f"\nFetching token data from: {url}")
         response = requests.get(url)
         data = response.json()
+        print(f"DexScreener response: {json.dumps(data, indent=2)}")
         if "pairs" not in data or len(data["pairs"]) == 0:
+            print("No pairs found in response")
             return None
-        return data["pairs"][0]
-    except Exception:
+        pair = data["pairs"][0]
+        print(f"\nUsing pair data: {json.dumps(pair, indent=2)}")
+        return pair
+    except Exception as e:
+        print(f"Error fetching token data: {str(e)}")
         return None
 
 
@@ -161,6 +167,8 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Generate alert message
         alert_message = generate_alert_message(pair)
+        if alert_message:
+            print(f"Generated alert: {alert_message}")
         
         # Generate price info
         price_usd = float(pair.get("priceUsd", 0))
@@ -187,8 +195,13 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Combine messages
         full_message = f"{alert_message}\n\n{price_info}{trade_message}" if alert_message else f"{price_info}{trade_message}"
         
+        # Escape special characters for MarkdownV2 but preserve emoji and newlines
+        escaped_message = full_message
+        for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+            escaped_message = escaped_message.replace(char, f'\\{char}')
+        
         await update.message.reply_text(
-            text=escape_md(full_message),
+            text=escaped_message,
             parse_mode='MarkdownV2',
             disable_web_page_preview=True
         )
