@@ -38,22 +38,42 @@ def escape_md(text):
 
 ### Fetch Recent Solana Transactions (Helius API) ###
 def fetch_solana_transactions(wallet_address, limit=5):
-    url = f"https://api.helius.xyz/v0/accounts/{wallet_address}/transactions?api-key={HELIUS_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-
-    response = requests.get(url, headers=headers)
+    """Fetch recent transactions for a wallet using Helius RPC."""
+    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
     
-    if response.status_code == 200:
-        return response.json().get("transactions", [])
-    else:
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "my-id",
+        "method": "getSignaturesForAddress",
+        "params": [
+            wallet_address,
+            {
+                "limit": limit
+            }
+        ]
+    }
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            result = response.json()
+            if "result" in result:
+                return result["result"]
         print(f"Helius API Error: {response.status_code} - {response.text}")
+        return None
+    except Exception as e:
+        print(f"Error fetching transactions: {str(e)}")
         return None
 
 # Example usage:
 transactions = fetch_solana_transactions(WALLET_ADDRESS)
 if transactions:
     for tx in transactions:
-        print(f"Signature: {tx['transaction']['signatures'][0]}, Slot: {tx['slot']}")
+        print(f"Signature: {tx.get('signature', 'Unknown')}, Slot: {tx.get('slot', 'N/A')}")
 
 
 ### Fetch Solana Analytics (Helius API) ###
@@ -133,8 +153,8 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if transactions:
         message += "📜 *Recent Transactions:*\n"
         for tx in transactions[:5]:
-            tx_hash = tx.get("transaction", {}).get("signatures", [])[0]
-            slot = tx.get("slot", "N/A")
+            tx_hash = tx.get('signature', 'Unknown')
+            slot = tx.get('slot', 'N/A')
             message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
     else:
         message += "⚠️ No recent transactions found.\n"
@@ -163,8 +183,8 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         if transactions:
             message += "📜 *Recent Transactions:*\n"
             for tx in transactions[:5]:
-                tx_hash = tx.get("transaction", {}).get("signatures", [])[0]
-                slot = tx.get("slot", "N/A")
+                tx_hash = tx.get('signature', 'Unknown')
+                slot = tx.get('slot', 'N/A')
                 message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
         else:
             message += "⚠️ No recent transactions found.\n"
