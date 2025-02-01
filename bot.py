@@ -289,11 +289,14 @@ def main():
     job_queue = app.job_queue
     job_queue.run_repeating(check_alerts, interval=120, first=10)  # ✅ Auto-alert every 2 min
 
-    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("Hello! I will notify you about token activity.")))
-    app.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text("Use /price or /alert to get updates.")))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
-
+    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
+    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
+    
     app.run_polling()
 
 
