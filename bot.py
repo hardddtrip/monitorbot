@@ -406,96 +406,62 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Fetch comprehensive token metadata using Helius APIs"""
+    """Fetch token metadata using Helius RPC API"""
     try:
-        helius_api_key = os.getenv("HELIUS_API_KEY")
-        if not helius_api_key:
-            logging.warning("HELIUS_API_KEY not found in environment variables")
-            return {}
+        HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+        if not HELIUS_API_KEY:
+            return None
+
+        url = f"https://api.helius.xyz/v0/rpc?api-key={HELIUS_API_KEY}"
+        
+        # First get account info
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getTokenInfo",
+            "params": [token_address]
+        }
+        
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            return None
             
-        # 1. Get basic token metadata
-        metadata_url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
-        metadata_response = requests.post(metadata_url, json={"mintAccounts": [token_address]})
-        metadata = metadata_response.json()
-        
-        # 2. Get DAS asset data
-        das_url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
-        das_response = requests.get(
-            f"https://api.helius.xyz/v0/addresses/{token_address}/assets?api-key={helius_api_key}",
-            params={"displayOptions": {"showFungible": True}}
-        )
-        das_data = das_response.json()
-        
-        # 3. Get token balances and holders
-        balances_url = f"https://api.helius.xyz/v0/addresses/{token_address}/balances?api-key={helius_api_key}"
-        balances_response = requests.get(balances_url)
-        balances_data = balances_response.json()
-        
-        if not metadata or not isinstance(metadata, list) or len(metadata) == 0:
-            return {}
+        data = response.json()
+        if "result" not in data:
+            return None
             
-        token_metadata = metadata[0].get("onChainMetadata", {})
-        token_das = das_data[0] if das_data and len(das_data) > 0 else {}
+        result = data["result"]
         
-        # Extract creator info
-        creators = token_metadata.get("metadata", {}).get("creators", [])
-        verified_creators = [c for c in creators if c.get("verified", False)]
+        # Then get mint info
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getTokenMetadata",
+            "params": [token_address]
+        }
         
-        # Get token standard (Token2022 vs regular SPL)
-        token_standard = token_das.get("interface", "SPL")
-        
-        # Get extensions if Token2022
-        extensions = []
-        if token_standard == "Token2022":
-            raw_extensions = token_das.get("extensions", {})
-            if raw_extensions.get("transferFee"):
-                extensions.append("Transfer Fee")
-            if raw_extensions.get("permanentDelegate"):
-                extensions.append("Permanent Delegate")
-            if raw_extensions.get("interestBearing"):
-                extensions.append("Interest Bearing")
-            if raw_extensions.get("nonTransferable"):
-                extensions.append("Non-Transferable")
-            if raw_extensions.get("defaultState"):
-                extensions.append("Default State")
+        response = requests.post(url, json=payload)
+        if response.status_code != 200:
+            return None
+            
+        data = response.json()
+        if "result" not in data:
+            return None
+            
+        metadata = data["result"]
         
         return {
-            # Basic info
-            "name": token_metadata.get("metadata", {}).get("name"),
-            "symbol": token_metadata.get("metadata", {}).get("symbol"),
-            "decimals": token_metadata.get("metadata", {}).get("decimals"),
-            "supply": token_metadata.get("supply"),
-            
-            # Authority info
-            "mintAuthority": token_metadata.get("mintAuthority"),
-            "freezeAuthority": token_metadata.get("freezeAuthority"),
-            "updateAuthority": token_metadata.get("metadata", {}).get("updateAuthority"),
-            
-            # Creator info
-            "creators": creators,
-            "verified_creators": verified_creators,
-            "royalties": token_metadata.get("metadata", {}).get("sellerFeeBasisPoints", 0) / 100,
-            
-            # Token standard and features
-            "token_standard": token_standard,
-            "extensions": extensions,
-            
-            # Holder statistics
-            "holder_count": balances_data.get("numHolders", 0),
-            "largest_holders": balances_data.get("items", [])[:5],  # Top 5 holders
-            
-            # Additional metadata
-            "description": token_metadata.get("metadata", {}).get("description"),
-            "image": token_metadata.get("metadata", {}).get("image"),
-            "external_url": token_metadata.get("metadata", {}).get("external_url"),
-            
-            # Collection info if part of one
-            "collection": token_metadata.get("metadata", {}).get("collection", {})
+            "name": metadata.get("name"),
+            "symbol": metadata.get("symbol"),
+            "decimals": metadata.get("decimals"),
+            "supply": result.get("supply"),
+            "mintAuthority": result.get("mintAuthority"),
+            "freezeAuthority": result.get("freezeAuthority"),
+            "holder_count": result.get("holderCount")
         }
         
     except Exception as e:
-        logging.error(f"Error fetching token metadata: {str(e)}")
-        return {}
+        return None
 
 def fetch_token_holders(token_address, limit=20):
     """Enhanced token holders fetch with RPC API."""
