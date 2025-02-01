@@ -574,15 +574,13 @@ def generate_trade_alert_message(trades):
     
     message = "🔔 *Recent EGG Token Activity*\n\n"
     
-    for trade in trades[:5]:  # Show last 5 trades
+    for trade in trades[:5]:  
         try:
-            # Extract trade info safely
             timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
             description = trade.get("description", "Unknown Trade")
             sig = trade.get("signature", "Unknown")[:8]
             
-            # Format trade info
-            message += f"• {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            message += f"*Trade at {timestamp.strftime('%Y-%m-%d %H:%M:%S')}*\n"
             message += f"  {description}\n"
             message += f"  Signature: {sig}...\n\n"
             
@@ -599,11 +597,10 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         print(f"\n--- Fetching trades for user {chat_id} ---")
         print(f"Token address: {DEFAULT_TOKEN_ADDRESS}")
         
-        # Get recent trades
         trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
         
-        # Generate and send message
         message = generate_trade_alert_message(trades)
+        
         await update.message.reply_text(
             text=message,
             parse_mode='Markdown',
@@ -622,7 +619,6 @@ def main():
     try:
         print("Starting bot in production environment...")
         
-        # Create application with proper timeouts and settings
         application = (
             ApplicationBuilder()
             .token(TELEGRAM_BOT_TOKEN)
@@ -634,11 +630,10 @@ def main():
             .get_updates_read_timeout(30)
             .get_updates_write_timeout(30)
             .get_updates_pool_timeout(30)
-            .concurrent_updates(True)  # Allow concurrent updates
+            .concurrent_updates(True)  
             .build()
         )
 
-        # Add command handlers
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("alert", alert_command))
@@ -652,25 +647,23 @@ def main():
         application.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
         application.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
 
-        # Add error handler
         application.add_error_handler(error_handler)
 
-        # Start the bot with proper settings
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,  # Important: Drop pending updates
-            stop_signals=None,  # Don't stop on signals
-            close_loop=False  # Don't close the event loop
+            drop_pending_updates=True,  
+            stop_signals=None,  
+            close_loop=False  
         )
 
     except telegram.error.Conflict as e:
         print(f"Conflict error: {e}")
         print("Another instance is running. Waiting for it to terminate...")
-        time.sleep(30)  # Wait longer to ensure other instance is gone
+        time.sleep(30)  
         sys.exit(1)
     except Exception as e:
         print(f"Error starting bot: {e}")
-        time.sleep(10)  # Wait before exiting
+        time.sleep(10)  
         sys.exit(1)
 
 def error_handler(update: Update, context: CallbackContext) -> None:
@@ -678,11 +671,11 @@ def error_handler(update: Update, context: CallbackContext) -> None:
     try:
         if isinstance(context.error, telegram.error.Conflict):
             print("Conflict error: Another instance is running")
-            return  # Just return and let the main error handler deal with it
+            return  
             
         if isinstance(context.error, telegram.error.TimedOut):
             print("Request timed out. Will retry automatically.")
-            return  # Return and let the framework retry
+            return  
             
         if update:
             print(f"Update {update.update_id} caused error: {context.error}")
