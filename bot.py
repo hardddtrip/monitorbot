@@ -96,13 +96,30 @@ def fetch_token_data(token_address):
 ### 🔹 Generate Alert Message ###
 def generate_alert_message(pair):
     """Generate alert messages based on token metrics."""
-    price_usd = float(pair["priceUsd"])
+    
+        pair = fetch_token_data(token_address)
+
+    if not pair:
+        await update.message.reply_text("⚠️ No trading data found for this token.")
+        return
+
+    price_usd =  float(pair["priceUsd"])
+    volume_24h =  float(pair["volume"]["h24"])
+    liquidity =  float(pair["liquidity"]["usd"])
+    market_cap =  float(pair.get("marketCap", "N/A"))
+    dex_url =  float(pair["url"])
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
 
     if price_usd > 1.2 * price_change_1h:
         return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        return "🛍 *Retail Arrival Detected!*"
+    elif liquidity > 2000000 and volume_24h > 5000000:
+        return "🔄 *Market Maker Transfer!* 📊"
     elif price_usd < 0.8 * price_change_1h:
         return "⚠️ *Dump Alert!* 💥"
+    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        return "💀 *Retail Capitulation!* 🏳️"
     return None
 
 
@@ -213,6 +230,60 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
+
+### 🔹 Help ###
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = escape_md(
+        "📌 *Available Commands:*\n"
+        "/start - Greet the user\n"
+        "/help - Show this help message\n"
+        "/ping - Check if the bot is alive\n"
+        "/price - Get token price\n"
+        "/alert - Check for alerts manually\n"
+        "/subscribe_alerts - Enable auto alerts for 24h\n"
+        "/unsubscribe_alerts - Disable auto alerts"
+    )
+    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
+
+
+### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
+async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    expiry_time = time.time() + 86400  # 24 hours from now
+    subscribed_users[user_id] = expiry_time
+    await update.message.reply_text("✅ You have subscribed to alerts for 24 hours!")
+
+async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.chat_id
+    if user_id in subscribed_users:
+        del subscribed_users[user_id]
+        await update.message.reply_text("❌ You have unsubscribed from alerts.")
+    else:
+        await update.message.reply_text("⚠️ You are not subscribed to alerts.")
+
+### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Check alerts every 15 minutes for subscribed users."""
+    current_time = time.time()
+    expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
+
+    # Remove expired subscriptions
+    for user_id in expired_users:
+        del subscribed_users[user_id]
+
+    # Process active subscriptions
+    for user_id in subscribed_users.keys():
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+        pair = fetch_token_data(token_address)
+
+        if pair:
+            alert_message = generate_alert_message(pair)
+            if alert_message:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=escape_md(alert_message),
+                    parse_mode="MarkdownV2"
+                )
 
 ### 🔹 Bot Main Function ###
 def main():
