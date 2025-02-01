@@ -95,81 +95,57 @@ def generate_alert_message(pair):
     if not pair or "priceUsd" not in pair:
         return None
 
-    # Extract all metrics
-    price_usd = float(pair["priceUsd"])
-    volume_24h = float(pair["volume"]["h24"])
-    volume_1h = float(pair["volume"].get("h1", 0))
-    
-    # Liquidity metrics
-    liquidity = float(pair["liquidity"]["usd"])
-    liquidity_base = float(pair["liquidity"]["base"])
-    liquidity_quote = float(pair["liquidity"]["quote"])
-    liquidity_change_24h = float(pair["liquidity"].get("h24", 0))
-    
-    # Market metrics
-    market_cap = float(pair.get("marketCap", 0))
-    fdv = float(pair.get("fdv", 0))
-    
-    # Price and volume metrics
+    # Extract metrics
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
     price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
-    buys_1h = int(pair["txns"]["h1"]["buys"])
-    sells_1h = int(pair["txns"]["h1"]["sells"])
+    volume_1h = float(pair.get("volume", {}).get("h1", 0))
+    volume_24h = float(pair.get("volume", {}).get("h24", 0))
+    liquidity_usd = float(pair.get("liquidity", {}).get("usd", 0))
+    txns = pair.get("txns", {})
+    buys_1h = int(txns.get("h1", {}).get("buys", 0))
+    sells_1h = int(txns.get("h1", {}).get("sells", 0))
+    avg_buy_1h = volume_1h / buys_1h if buys_1h > 0 else 0
+    avg_sell_1h = volume_1h / sells_1h if sells_1h > 0 else 0
 
-    # Calculate derived metrics
-    avg_buy_size = volume_1h / buys_1h if buys_1h > 0 else 0
-    avg_sell_size = volume_1h / sells_1h if sells_1h > 0 else 0
-    buy_sell_ratio = buys_1h / sells_1h if sells_1h > 0 else float('inf')
-    liquidity_concentration = abs(liquidity_base - liquidity_quote) / liquidity if liquidity > 0 else 0
+    # Log metrics for debugging
+    print(f"Alert Metrics - Price Change 1h: {price_change_1h}%, 24h: {price_change_24h}%")
+    print(f"Volume 1h: ${volume_1h:,.2f}, 24h: ${volume_24h:,.2f}")
+    print(f"Liquidity: ${liquidity_usd:,.2f}")
+    print(f"Transactions 1h - Buys: {buys_1h}, Sells: {sells_1h}")
+    print(f"Avg Transaction 1h - Buy: ${avg_buy_1h:,.2f}, Sell: ${avg_sell_1h:,.2f}")
 
-    # Debug log all metrics
-    print("\n=== Alert Metrics ===")
-    print(f"Price USD: ${price_usd:.6f}")
-    print(f"1h Price Change: {price_change_1h:.2f}%")
-    print(f"24h Volume: ${volume_24h:,.0f}")
-    print(f"1h Volume: ${volume_1h:,.0f}")
-    print(f"Liquidity: ${liquidity:,.0f}")
-    print(f"24h Liquidity Change: ${liquidity_change_24h:,.0f}")
-    print(f"Market Cap: ${market_cap:,.0f}")
-    print(f"FDV: ${fdv:,.0f}")
-    print(f"1h Buys: {buys_1h}")
-    print(f"1h Sells: {sells_1h}")
-    print(f"Avg Buy Size: ${avg_buy_size:,.2f}")
-    print(f"Avg Sell Size: ${avg_sell_size:,.2f}")
-    print(f"Buy/Sell Ratio: {buy_sell_ratio:.2f}")
-    print(f"Liquidity Concentration: {liquidity_concentration:.2f}")
+    # Pump Alert - Price increase and high volume
+    if price_change_1h > 20 and volume_1h > volume_24h / 12:  
+        return "📈 Pump Alert! 🚀\n\n" \
+               f"Price up {price_change_1h:.1f}% in 1h\n" \
+               f"Volume: ${volume_1h:,.0f} (1h)"
 
-    # Pump alert: Significant price increase with volume
-    if price_change_1h > 20 and volume_1h > volume_24h / 12:
-        print("✅ Pump Alert triggered!")
-        return "📈 *Pump Alert!* 🚀\nRapid price increase with high volume!"
-    
-    # Retail arrival: Many small buys and increasing price
-    elif buys_1h > 500 and avg_buy_size < 100 and price_change_1h > 5:
-        print("✅ Retail Arrival triggered!")
-        return "🛍 *Retail Arrival Detected!*\nMany small buys with price uptick!"
-    
-    # Market maker: Large liquidity changes with balanced trading and low price impact
-    elif (abs(liquidity_change_24h) > 1000000 and 
-          0.8 < buy_sell_ratio < 1.2 and 
-          liquidity_concentration < 0.1):
-        print("✅ Market Maker triggered!")
-        return "🔄 *Market Maker Transfer!* 📊\nLarge balanced liquidity movement!"
-    
-    # Dump alert: Price drop with high volume
-    elif price_change_1h < -20 and volume_1h > volume_24h / 12:
-        print("✅ Dump Alert triggered!")
-        return "⚠️ *Dump Alert!* 💥\nSignificant price drop with high volume!"
-    
-    # Capitulation: Many small sells with decreasing price and low mcap
-    elif (sells_1h > 1000 and 
-          avg_sell_size < 100 and 
-          price_change_1h < -10 and 
-          market_cap < fdv * 0.8):
-        print("✅ Retail Capitulation triggered!")
-        return "💀 *Retail Capitulation!* 🏳️\nMass panic selling detected!"
-    
-    print("❌ No alerts triggered")
+    # Retail Arrival - Many small buys
+    if buys_1h > 50 and avg_buy_1h < 100 and price_change_1h > 10:  
+        return "👥 Retail Arrival! 📱\n\n" \
+               f"Price up {price_change_1h:.1f}% in 1h\n" \
+               f"Buys: {buys_1h} (1h)\n" \
+               f"Avg Buy: ${avg_buy_1h:,.0f}"
+
+    # Market Maker - Large liquidity changes
+    if liquidity_usd > 100000:  
+        return "🏦 Market Maker Alert! 💰\n\n" \
+               f"Liquidity: ${liquidity_usd:,.0f}\n" \
+               f"Price change: {price_change_1h:.1f}% (1h)"
+
+    # Dump Alert - Price decrease and high volume
+    if price_change_1h < -15 and volume_1h > volume_24h / 12:  
+        return "📉 Dump Alert! 🚨\n\n" \
+               f"Price down {price_change_1h:.1f}% in 1h\n" \
+               f"Volume: ${volume_1h:,.0f} (1h)"
+
+    # Retail Capitulation - Many small sells
+    if sells_1h > 50 and avg_sell_1h < 100 and price_change_1h < -10:  
+        return "🏃 Retail Capitulation! 💨\n\n" \
+               f"Price down {price_change_1h:.1f}% in 1h\n" \
+               f"Sells: {sells_1h} (1h)\n" \
+               f"Avg Sell: ${avg_sell_1h:,.0f}"
+
     return None
 
 ### Telegram Command: Fetch Alerts ###
@@ -640,28 +616,121 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in metadata command: {str(e)}")
         await update.message.reply_text("❌ An error occurred while fetching token metadata")
 
-def generate_trade_alert_message(trades):
-    """Generate alert message from trade data."""
-    if not trades:
-        return "⚠️ Could not fetch trade data. This might be due to API rate limits or the token not being actively traded."
+async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Analyze the health and risk factors of a token"""
+    token_address = DEFAULT_TOKEN_ADDRESS
+    if context.args and len(context.args) > 0:
+        token_address = context.args[0]
+
+    pair = fetch_token_data(token_address)
     
-    message = "🔔 *Recent EGG Token Activity*\n\n"
-    
-    for trade in trades[:5]:  
-        try:
-            timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
-            description = trade.get("description", "Unknown Trade")
-            sig = trade.get("signature", "Unknown")[:8]
+    if not pair:
+        await update.message.reply_text("❌ Failed to fetch token data")
+        return
+
+    try:
+        # Extract basic metrics
+        price_usd = float(pair["priceUsd"])
+        volume_24h = float(pair["volume"]["h24"])
+        volume_1h = float(pair.get("volume", {}).get("h1", 0))
+        liquidity = float(pair["liquidity"]["usd"])
+        market_cap = float(pair.get("marketCap", 0))
+        fdv = float(pair.get("fdv", 0))
+        
+        # Price metrics
+        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+        price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
+        price_change_7d = float(pair.get("priceChange", {}).get("d7", 0))
+        
+        # Liquidity metrics
+        liquidity_base = float(pair["liquidity"]["base"])
+        liquidity_quote = float(pair["liquidity"]["quote"])
+        liquidity_change_24h = float(pair.get("liquidity", {}).get("h24", 0))
+        
+        # Transaction metrics
+        txns_1h = pair.get("txns", {}).get("h1", {})
+        txns_24h = pair.get("txns", {}).get("h24", {})
+        buys_1h = int(txns_1h.get("buys", 0))
+        sells_1h = int(txns_1h.get("sells", 0))
+        buys_24h = int(txns_24h.get("buys", 0))
+        sells_24h = int(txns_24h.get("sells", 0))
+        
+        # Calculate derived metrics
+        avg_buy_size_1h = volume_1h / buys_1h if buys_1h > 0 else 0
+        avg_sell_size_1h = volume_1h / sells_1h if sells_1h > 0 else 0
+        buy_sell_ratio_24h = buys_24h / sells_24h if sells_24h > 0 else float('inf')
+        liquidity_concentration = abs(liquidity_base - liquidity_quote) / liquidity if liquidity > 0 else 0
+        volume_to_mcap = (volume_24h / market_cap * 100) if market_cap > 0 else 0
+        liquidity_to_mcap = (liquidity / market_cap * 100) if market_cap > 0 else 0
+        
+        # Risk assessment
+        risk_factors = []
+        if liquidity < 50000:
+            risk_factors.append("⚠️ Low liquidity \\(<$50k\\)")
+        if liquidity_to_mcap < 5:
+            risk_factors.append("⚠️ Low liquidity/mcap ratio \\(<5%\\)")
+        if volume_to_mcap < 1:
+            risk_factors.append("⚠️ Low volume/mcap ratio \\(<1%\\)")
+        if abs(price_change_24h) > 50:
+            risk_factors.append("⚠️ High price volatility \\(>50% in 24h\\)")
+        if liquidity_concentration > 0.3:
+            risk_factors.append("⚠️ High liquidity imbalance")
+        if market_cap > 0 and fdv / market_cap > 5:
+            risk_factors.append("⚠️ High FDV/MCAP ratio \\(>5x\\)")
+        
+        # Health score calculation (0-100)
+        health_score = 100
+        health_score -= 0 if liquidity > 100000 else (20 * (1 - liquidity/100000))  # -20 max
+        health_score -= 0 if liquidity_to_mcap > 10 else (15 * (1 - liquidity_to_mcap/10))  # -15 max
+        health_score -= 0 if volume_to_mcap > 5 else (15 * (1 - volume_to_mcap/5))  # -15 max
+        health_score -= 0 if abs(price_change_24h) < 30 else (20 * (abs(price_change_24h)/100))  # -20 max
+        health_score -= 0 if liquidity_concentration < 0.2 else (15 * liquidity_concentration)  # -15 max
+        health_score -= 0 if fdv/market_cap < 3 else (15 * (fdv/market_cap/10))  # -15 max
+        health_score = max(0, min(100, health_score))  # Clamp between 0-100
+        
+        # Generate health indicator
+        health_indicator = "🟢" if health_score >= 80 else "🟡" if health_score >= 50 else "🔴"
+        
+        # Format audit message
+        audit_message = (
+            f"🔍 *Token Audit Report* 🔍\\n\\n"
+            f"*Health Score:* {health_indicator} {health_score:.0f}/100\\n\\n"
             
-            message += f"*Trade at {timestamp.strftime('%Y-%m-%d %H:%M:%S')}*\n"
-            message += f"  {description}\n"
-            message += f"  Signature: {sig}...\n\n"
+            f"*Price Metrics*\\n"
+            f"• Current Price: ${price_usd:,.6f}\\n"
+            f"• 1h Change: {price_change_1h:+.1f}%\\n"
+            f"• 24h Change: {price_change_24h:+.1f}%\\n"
+            f"• 7d Change: {price_change_7d:+.1f}%\\n\\n"
             
-        except Exception as e:
-            print(f"Error formatting trade: {e}")
-            continue
-    
-    return message
+            f"*Market Metrics*\\n"
+            f"• Market Cap: ${market_cap:,.0f}\\n"
+            f"• FDV: ${fdv:,.0f}\\n"
+            f"• 24h Volume: ${volume_24h:,.0f}\\n"
+            f"• Volume/MCap: {volume_to_mcap:.1f}%\\n\\n"
+            
+            f"*Liquidity Metrics*\\n"
+            f"• Total Liquidity: ${liquidity:,.0f}\\n"
+            f"• Liquidity/MCap: {liquidity_to_mcap:.1f}%\\n"
+            f"• 24h Change: ${liquidity_change_24h:+,.0f}\\n"
+            f"• Concentration: {liquidity_concentration:.2f}\\n\\n"
+            
+            f"*Trading Activity \\(24h\\)*\\n"
+            f"• Buy Transactions: {buys_24h}\\n"
+            f"• Sell Transactions: {sells_24h}\\n"
+            f"• Buy/Sell Ratio: {buy_sell_ratio_24h:.2f}\\n"
+            f"• Avg Buy \\(1h\\): ${avg_buy_size_1h:,.0f}\\n"
+            f"• Avg Sell \\(1h\\): ${avg_sell_size_1h:,.0f}\\n\\n"
+        )
+        
+        # Add risk factors if any
+        if risk_factors:
+            audit_message += "*Risk Factors*\\n" + "\\n".join(risk_factors)
+        
+        await update.message.reply_text(audit_message, parse_mode='MarkdownV2')
+        
+    except Exception as e:
+        logging.error(f"Error in audit command: {str(e)}")
+        await update.message.reply_text("❌ Error analyzing token data")
 
 ### Bot Main Function ###
 def main():
@@ -696,6 +765,7 @@ def main():
         application.add_handler(CommandHandler("liquidity", liquidity_command))
         application.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
         application.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
+        application.add_handler(CommandHandler("audit", audit_command))
 
         application.add_error_handler(error_handler)
 
