@@ -198,7 +198,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Telegram command to fetch token price and transaction data."""
     try:
         chat_id = update.message.chat_id
-        token_address = context.application.user_data.get(chat_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+        token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
         
         print(f"\n--- Fetching data for user {chat_id} ---")
         print(f"Token address: {token_address}")
@@ -260,7 +260,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch token price and market data."""
     user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     pair = fetch_token_data(token_address)
 
     if not pair:
@@ -295,16 +295,13 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Allow users to change the token address they want to track."""
-    user_id = update.message.chat_id
-
     if not context.args:
         await update.message.reply_text("⚠️ Usage: /change <TOKEN_ADDRESS>")
         return
 
     token_address = context.args[0]
-    context.application.user_data[user_id] = {'token_address': token_address}
+    context.user_data['token_address'] = token_address
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
-
 
 ### Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -337,10 +334,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Subscribe to automatic alerts."""
     user_id = update.message.chat_id
-    context.application.user_data[user_id] = {'subscribed': True}
+    context.user_data['subscribed'] = True
     
     # Send an immediate alert to confirm subscription
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     pair = fetch_token_data(token_address)
     
     message = "✅ *You have subscribed to alerts for 24 hours!* \n\n"
@@ -354,8 +351,8 @@ async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT
 async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Unsubscribe from automatic alerts."""
     user_id = update.message.chat_id
-    if user_id in context.application.user_data and 'subscribed' in context.application.user_data[user_id]:
-        del context.application.user_data[user_id]['subscribed']
+    if 'subscribed' in context.user_data:
+        del context.user_data['subscribed']
         await update.message.reply_text(escape_md("❌ You have unsubscribed from alerts."), parse_mode="MarkdownV2")
     else:
         await update.message.reply_text(escape_md("⚠️ You are not subscribed to alerts."), parse_mode="MarkdownV2")
@@ -367,7 +364,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         print("\n--- Running scheduled alert check ---")
         
         # Get subscribed users
-        subscribed_users = context.application.user_data.get('subscribed_users', [])
+        subscribed_users = [user_id for user_id, data in context.application.user_data.items() if 'subscribed' in data]
         if not subscribed_users:
             print("No subscribed users")
             return
@@ -605,7 +602,7 @@ async def fetch_liquidity_changes(token_address):
 async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show top token holders."""
     user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     holders = fetch_token_holders(token_address)
     if not holders:
@@ -623,7 +620,7 @@ async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show recent large trades."""
     user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     print(f"\n--- Fetching trades for user {user_id} ---")
     print(f"Token address: {token_address}")
@@ -657,7 +654,7 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show liquidity changes."""
     user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     
     liquidity_data = await fetch_liquidity_changes(token_address)
     if not liquidity_data:
@@ -685,7 +682,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show token metadata."""
     try:
         user_id = update.message.chat_id
-        token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+        token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
         
         print(f"\n--- Fetching metadata for user {user_id} ---")
         print(f"Token address: {token_address}")
