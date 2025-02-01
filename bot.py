@@ -917,15 +917,8 @@ def analyze_recent_transactions(token_address, minutes=15):
             return None
             
         # Use Helius Enhanced Transaction History API
-        url = f"https://api.helius.xyz/v0/token-transactions?api-key={HELIUS_API_KEY}"
-        payload = {
-            "query": {
-                "accounts": [token_address],
-                "startTime": cutoff_time,
-                "endTime": current_time
-            }
-        }
-        response = requests.post(url, json=payload)
+        url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
+        response = requests.get(url)
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
@@ -961,6 +954,8 @@ def analyze_recent_transactions(token_address, minutes=15):
         wallets = set()
         wallet_last_trade = {}  # Last trade time per wallet
         wallet_trade_counts = {}  # Number of trades per wallet
+        large_trades = []  # Track large trades for sandwich detection
+        
         patterns = {
             "swaps": 0,
             "rapid_swaps": 0,
@@ -973,14 +968,16 @@ def analyze_recent_transactions(token_address, minutes=15):
             "failed": 0
         }
         
-        large_trades = []  # Track large trades for sandwich detection
-        
         for tx in transactions:
+            # Skip old transactions
+            timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
+            if timestamp < cutoff_time:
+                continue
+                
             # Extract transaction details
             source = tx.get('sourceAddress', '')
             instructions = tx.get('instructions', [])
-            timestamp = tx.get('timestamp', 0)
-            signatures = tx.get('signatures', [])
+            amount_usd = tx.get('amount', {}).get('usd', 0)
             
             if source:
                 wallets.add(source)
@@ -997,32 +994,49 @@ def analyze_recent_transactions(token_address, minutes=15):
             wallet_trade_counts[source] = wallet_trade_counts.get(source, 0) + 1
             
             # Analyze transaction type
-            for inst in instructions:
-                program = inst.get('programId', '')
-                if program in ['9qvG1zUp8xF1Bi4m6UdRNby1BAAuaDrUxSpv4CmRRMjL']:  # Jupiter/Raydium
-                    patterns["swaps"] += 1
-                    
-                    # Check for high slippage
-                    if inst.get('slippage', 0) > 5:
-                        patterns["high_slippage"] += 1
-                        
-                    # Check for arbitrage (multiple DEX interactions)
-                    if len([i for i in instructions if i.get('programId') in ['9qvG1zUp8xF1Bi4m6UdRNby1BAAuaDrUxSpv4CmRRMjL']]) > 1:
-                        patterns["arbitrage"] += 1
+            if any(prog in str(instructions) for prog in ['Jupiter', 'Raydium', 'Orca']):
+                patterns["swaps"] += 1
                 
-                if program in ['LendZqTs7gn5CTSJU1jWKhKuVpjJGom45nnwPb2AMTi']:  # Lending protocols
-                    if any('flash' in str(inst.get('data', '')).lower() for inst in instructions):
-                        patterns["flash_loans"] += 1
+                # Check for high slippage
+                if tx.get('slippage', 0) > 5:
+                    patterns["high_slippage"] += 1
+                    
+                # Check for arbitrage (multiple DEX interactions)
+                if len([i for i in instructions if any(dex in str(i) for dex in ['Jupiter', 'Raydium', 'Orca'])]) > 1:
+                    patterns["arbitrage"] += 1
+                    
+                # Track for sandwich attack detection
+                if amount_usd > 5000:  # Large trades
+                    large_trades.append({
+                        "timestamp": timestamp,
+                        "amount": amount_usd
+                    })
+            
+            # Check for flash loans
+            if "flash_loan" in str(instructions).lower() or (source == tx.get('destinationAddress') and amount_usd > 10000):
+                patterns["flash_loans"] += 1
             
             # Check for failed transactions
-            if tx.get('successful') is False:
+            if not tx.get('successful', True):
                 patterns["failed"] += 1
+                
+            # Check for wash trading
+            if source in wallet_trade_counts and wallet_trade_counts[source] >= 3:
+                patterns["wash_trades"] += 1
+                
+            # Check for sandwich attacks
+            if len(large_trades) >= 3:
+                for i in range(len(large_trades) - 2):
+                    if (large_trades[i+1]["timestamp"] - large_trades[i]["timestamp"] < 60 and
+                        large_trades[i+2]["timestamp"] - large_trades[i+1]["timestamp"] < 60):
+                        if large_trades[i+1]["amount"] > large_trades[i]["amount"] * 2:
+                            patterns["sandwich_attacks"] += 1
         
         # Calculate trading velocity (tx/min)
-        trading_velocity = len(transactions) / minutes if minutes > 0 else 0
+        total_trades = len([tx for tx in transactions if tx.get("timestamp", 0)/1000 >= cutoff_time])
+        trading_velocity = total_trades / minutes if minutes > 0 else 0
         
         # Calculate risk metrics
-        total_trades = len(transactions)
         if total_trades > 0:
             bot_activity = (patterns["bot_trades"] / total_trades) * 100
             wash_trading = (patterns["wash_trades"] / total_trades) * 100
