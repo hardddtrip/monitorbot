@@ -434,7 +434,7 @@ def fetch_token_metadata(token_address):
             return None
             
         # Get the pair with highest liquidity
-        pair = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0)) if x.get("liquidity", {}).get("usd") else 0)
+        pair = max(pairs, key=lambda x: float(x.get("liquidity", {}).get("usd", 0)), reverse=True)
         
         # Get base token info
         base_token = pair.get("baseToken", {})
@@ -512,82 +512,58 @@ def fetch_token_holders(token_address, limit=20):
 async def fetch_recent_trades(token_address, limit=10):
     """Enhanced recent trades fetch with DAS API integration."""
     try:
-        print(f"Fetching trades for {token_address}")
-        
-        # Get current price for USD conversion
-        pair = fetch_token_data(token_address)
-        if not pair:
+        # Get Helius API key
+        HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+        if not HELIUS_API_KEY:
+            print("Missing HELIUS_API_KEY")
             return None
-        current_price = float(pair.get("priceUsd", 0))
-        
-        # Construct API URL
-        url = "https://api.helius.xyz/v0/addresses"
-        
-        # Set up parameters
-        payload = {
-            "jsonrpc": "2.0",
-            "id": "my-id",
-            "method": "searchAssetTransfers",
-            "params": {
-                "query": {
-                    "ownerAddress": token_address,
-                    "fromTime": int(time.time()) - 3600,  # Convert to milliseconds
-                    "toTime": int(time.time()),  # Convert to milliseconds
-                    "limit": limit * 2  # Fetch more to account for filtered transactions
-                }
-            }
-        }
+            
+        # Use Helius DAS API
+        url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
+        print(f"Fetching trades from Helius API: {url}")
         
         # Make API request
-        response = requests.post(url, json=payload)
+        response = requests.get(url)
         print(f"API Response Status: {response.status_code}")
-        print(f"API Request Payload: {json.dumps(payload, indent=2)}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
         data = response.json()
-        print(f"API Response Data: {json.dumps(data, indent=2)}")
-        trades_data = data.get('result', [])
+        trades_data = data
         print(f"Total transactions returned: {len(trades_data)}")
         
         trades = []
         for tx in trades_data:
-            try:
-                # Extract transfer amounts
-                description = tx.get("description", "")
-                if not description or "Swap" not in description:
-                    continue
-                    
-                # Parse amounts from description
-                # Example: "Swap 1000 TOKEN for 5 SOL"
-                parts = description.split()
-                amount_index = parts.index("Swap") + 1
-                amount_token = float(parts[amount_index])
-                
-                # Determine if it's a buy or sell based on token flow
-                is_buy = "for" in description
-                
-                # Calculate USD amount
-                amount_usd = amount_token * current_price
-                
+            # Extract trade details
+            source = tx.get('sourceAddress', '')
+            type = tx.get('type', '')
+            description = tx.get('description', '')
+            timestamp = tx.get('timestamp', 0) / 1000  # Convert to seconds
+            
+            # Try to extract amount from token transfers
+            amount = 0
+            if 'tokenTransfers' in tx:
+                for transfer in tx['tokenTransfers']:
+                    if transfer.get('mint') == token_address:
+                        amount = float(transfer.get('tokenAmount', 0))
+                        break
+            
+            # Only include swap transactions
+            if "SWAP" in type or "swap" in description.lower():
                 trades.append({
-                    "type": "BUY" if is_buy else "SELL",
-                    "amount_token": amount_token,
-                    "amount_usd": amount_usd,
-                    "price_usd": current_price,
-                    "timestamp": tx.get("timestamp", 0)
+                    'type': 'swap',
+                    'amount': amount,
+                    'timestamp': timestamp,
+                    'source': source,
+                    'success': tx.get('successful', True)
                 })
                 
                 if len(trades) >= limit:
                     break
-                    
-            except Exception as e:
-                print(f"Error parsing trade: {str(e)}")
-                continue
         
-        return trades
+        return trades[:limit]
         
     except Exception as e:
         print(f"Error in fetch_recent_trades: {str(e)}")
@@ -943,35 +919,21 @@ def analyze_recent_transactions(token_address, minutes=15):
             print("Missing HELIUS_API_KEY")
             return None
             
-        # Use Helius Enhanced Transactions API
-        url = "https://api.helius.xyz/v0/addresses"
+        # Use Helius DAS API
+        url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
         print(f"Fetching transactions from Helius API: {url}")
         
-        payload = {
-            "jsonrpc": "2.0",
-            "id": "my-id",
-            "method": "searchAssetTransfers",
-            "params": {
-                "query": {
-                    "ownerAddress": token_address,
-                    "fromTime": cutoff_time * 1000,  # Convert to milliseconds
-                    "toTime": current_time * 1000,  # Convert to milliseconds
-                    "limit": 100
-                }
-            }
-        }
-        
-        response = requests.post(url, json=payload)
+        # Make API request
+        response = requests.get(url)
         print(f"API Response Status: {response.status_code}")
-        print(f"API Request Payload: {json.dumps(payload, indent=2)}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
         data = response.json()
-        print(f"API Response Data: {json.dumps(data, indent=2)}")
-        transactions = data.get('result', [])
+        print(f"API Response Data: {json.dumps(data[:2], indent=2)}")  # Show first 2 transactions only
+        transactions = data
         print(f"Total transactions returned: {len(transactions)}")
         
         if not transactions:
@@ -1017,24 +979,30 @@ def analyze_recent_transactions(token_address, minutes=15):
             "failed": 0
         }
         
-        # Sample first transaction for debugging
-        if transactions:
-            print("\nSample transaction structure:")
-            print(json.dumps(transactions[0], indent=2))
-        
         for tx in transactions:
+            # Skip old transactions
+            timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
+            if timestamp < cutoff_time:
+                continue
+                
             # Extract transaction details
             source = tx.get('sourceAddress', '')
             type = tx.get('type', '')
             description = tx.get('description', '')
-            amount = tx.get('amount', {}).get('usd', 0)
-            timestamp = tx.get('timestamp', 0) / 1000  # Convert to seconds
+            
+            # Try to extract amount from different possible locations
+            amount = 0
+            if 'tokenTransfers' in tx:
+                for transfer in tx['tokenTransfers']:
+                    if transfer.get('mint') == token_address:
+                        amount = float(transfer.get('tokenAmount', 0))
+                        break
             
             print(f"\nAnalyzing transaction:")
             print(f"Type: {type}")
             print(f"Description: {description}")
             print(f"Source: {source}")
-            print(f"Amount USD: ${amount}")
+            print(f"Amount: {amount}")
             print(f"Timestamp: {timestamp}")
             
             if source:
@@ -1054,7 +1022,7 @@ def analyze_recent_transactions(token_address, minutes=15):
             wallet_trade_counts[source] = wallet_trade_counts.get(source, 0) + 1
             
             # Analyze transaction type
-            if type == "SWAP":
+            if "SWAP" in type or "swap" in description.lower():
                 patterns["swaps"] += 1
                 print("Detected swap transaction")
                 
@@ -1063,8 +1031,8 @@ def analyze_recent_transactions(token_address, minutes=15):
                     patterns["high_slippage"] += 1
                     print("Detected high slippage")
                     
-                # Check for arbitrage (multiple swaps in same transaction)
-                if "arbitrage" in description.lower():
+                # Check for arbitrage
+                if "arbitrage" in description.lower() or len(tx.get('tokenTransfers', [])) > 2:
                     patterns["arbitrage"] += 1
                     print("Detected arbitrage")
                     
@@ -1074,7 +1042,7 @@ def analyze_recent_transactions(token_address, minutes=15):
                         "timestamp": timestamp,
                         "amount": amount
                     })
-                    print(f"Detected large trade: ${amount}")
+                    print(f"Detected large trade: {amount}")
             
             # Check for flash loans
             if "flash_loan" in description.lower() or (source == tx.get('destinationAddress') and amount > 10000):
