@@ -243,58 +243,83 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ### Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a message when the command /help is issued."""
     help_text = escape_md(
-        "📌 *Available Commands:*\n"
-        "/start - Greet the user\n"
+        "🤖 Available commands:\n\n"
+        "/start - Start the bot\n"
         "/help - Show this help message\n"
-        "/ping - Check if the bot is alive\n"
         "/price - Get token price\n"
         "/alert - Check for alerts manually\n"
         "/change <TOKEN_ADDRESS> - Change token address\n"
-        "/subscribe_alerts - Enable auto alerts for 24h\n"
-        "/unsubscribe_alerts - Disable auto alerts"
+        "/subscribe - Enable auto alerts for 24h\n"
+        "/unsubscribe - Disable auto alerts\n"
+        "/ping - Check if bot is alive"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
 
 ### --- SUBSCRIBE TO AUTOMATIC ALERTS --- ###
 async def subscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Subscribe to automatic alerts."""
     user_id = update.message.chat_id
     expiry_time = time.time() + 86400  # 24 hours from now
     subscribed_users[user_id] = expiry_time
-    await update.message.reply_text("✅ You have subscribed to alerts for 24 hours!")
+    
+    # Send an immediate alert to confirm subscription
+    token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+    pair = fetch_token_data(token_address)
+    
+    message = "✅ *You have subscribed to alerts for 24 hours!* \n\n"
+    if pair:
+        alert_message = generate_alert_message(pair)
+        if alert_message:
+            message += "Here's your first alert:\n\n" + alert_message
+    
+    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
 async def unsubscribe_alerts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unsubscribe from automatic alerts."""
     user_id = update.message.chat_id
     if user_id in subscribed_users:
         del subscribed_users[user_id]
-        await update.message.reply_text("❌ You have unsubscribed from alerts.")
+        await update.message.reply_text(escape_md("❌ You have unsubscribed from alerts."), parse_mode="MarkdownV2")
     else:
-        await update.message.reply_text("⚠️ You are not subscribed to alerts.")
+        await update.message.reply_text(escape_md("⚠️ You are not subscribed to alerts."), parse_mode="MarkdownV2")
 
 ### --- AUTOMATIC ALERT FUNCTION (Scheduled Using JobQueue) --- ###
 async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """Check alerts every 15 minutes for subscribed users."""
+    """Check alerts every 2 minutes for subscribed users."""
     current_time = time.time()
     expired_users = [user_id for user_id, expiry in subscribed_users.items() if current_time > expiry]
 
-    # Remove expired subscriptions
+    # Remove expired subscriptions and notify users
     for user_id in expired_users:
         del subscribed_users[user_id]
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=escape_md("⏰ Your 24-hour alert subscription has expired. Use /subscribe to enable alerts again."),
+                parse_mode="MarkdownV2"
+            )
+        except Exception as e:
+            print(f"Error notifying user {user_id} about subscription expiry: {str(e)}")
 
     # Process active subscriptions
     for user_id in subscribed_users.keys():
-        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
-        pair = fetch_token_data(token_address)
+        try:
+            token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+            pair = fetch_token_data(token_address)
 
-        if pair:
-            alert_message = generate_alert_message(pair)
-            if alert_message:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=escape_md(alert_message),
-                    parse_mode="MarkdownV2"
-                )
+            if pair:
+                alert_message = generate_alert_message(pair)
+                if alert_message:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=escape_md(alert_message),
+                        parse_mode="MarkdownV2"
+                    )
+        except Exception as e:
+            print(f"Error sending alert to user {user_id}: {str(e)}")
 
 ### Bot Main Function ###
 def main():
@@ -316,10 +341,11 @@ def main():
         # Add error handler
         app.add_error_handler(error_handler)
 
-        job_queue.run_repeating(check_alerts, interval=120, first=10)  # Auto-alert every 2 min
+        # Set up job queue for alerts (every 2 minutes)
+        job_queue.run_repeating(check_alerts, interval=120, first=10)
 
         print(f"Starting bot in {ENVIRONMENT} environment...")
-        app.run_polling(drop_pending_updates=True)  # Add drop_pending_updates=True
+        app.run_polling(drop_pending_updates=True)
     except Exception as e:
         print(f"Error starting bot: {str(e)}")
         if "Conflict" in str(e):
