@@ -10,21 +10,21 @@ from telegram.ext import (
     JobQueue
 )
 
-# ✅ Load environment variables
+# Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # ✅ Helius API Key
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Helius API Key
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # Add environment variable
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
 DEFAULT_WALLET = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4" 
 WALLET_ADDRESS = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4"
 
-
-# ✅ Ensure tokens exist
+# Ensure tokens exist
 if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("🚨 TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
+    raise ValueError("TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
 if not HELIUS_API_KEY:
-    raise ValueError("🚨 HELIUS_API_KEY is missing! Set it in your environment variables.")
+    raise ValueError("HELIUS_API_KEY is missing! Set it in your environment variables.")
 
-# ✅ Store user-tracked token addresses
+# Store user-tracked token addresses
 user_addresses = {}
 subscribed_users = {}  # {user_id: expiry_timestamp}
 
@@ -35,7 +35,7 @@ def escape_md(text):
     return "".join(f"\\{char}" if char in special_chars else char for char in str(text))
 
 
-### 🔹 Fetch Recent Solana Transactions (Helius API) ###
+### Fetch Recent Solana Transactions (Helius API) ###
 def fetch_solana_transactions(wallet_address, limit=5):
     url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     payload = {
@@ -54,7 +54,7 @@ def fetch_solana_transactions(wallet_address, limit=5):
     if response.status_code == 200:
         return response.json().get("result", [])
     else:
-        print(f"⚠️ Helius API Error: {response.status_code} - {response.text}")
+        print(f"Helius API Error: {response.status_code} - {response.text}")
         return None
 
 # Example usage:
@@ -64,7 +64,7 @@ if transactions:
         print(f"Signature: {tx['signature']}, Slot: {tx['slot']}")
 
 
-### 🔹 Fetch Solana Analytics (Helius API) ###
+### Fetch Solana Analytics (Helius API) ###
 def fetch_solana_analytics():
     """Fetch trending Solana analytics, including trending wallets, token activity, and NFT transfers."""
     url = f"https://api.helius.xyz/v0/analytics?api-key={HELIUS_API_KEY}"
@@ -75,11 +75,11 @@ def fetch_solana_analytics():
     if response.status_code == 200:
         return response.json()
     else:
-        print(f"⚠️ Helius Analytics API Error: {response.status_code} - {response.text}")
+        print(f"Helius Analytics API Error: {response.status_code} - {response.text}")
         return None
 
 
-### 🔹 Fetch Token Price (DexScreener API) ###
+### Fetch Token Price (DexScreener API) ###
 def fetch_token_data(token_address):
     """Fetch token data from DexScreener API."""
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -93,7 +93,7 @@ def fetch_token_data(token_address):
         return None
 
 
-### 🔹 Generate Alert Message ###
+### Generate Alert Message ###
 def generate_alert_message(pair):
     """Generate alert messages based on token metrics."""
 
@@ -106,21 +106,31 @@ def generate_alert_message(pair):
     market_cap = pair.get("marketCap", "N/A")
     dex_url = pair["url"]
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+    price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))  # 5-minute change
+    
+    # Calculate approximate 15-minute change using 5-minute data
+    # If 5-minute data shows a trend, multiply by 3 to estimate 15-minute change
+    price_change_15m = price_change_5m * 3
+
+    message = f"💰 *Price Update*\n"
+    message += f"Current Price: ${price_usd:.6f}\n"
+    message += f"15min Change: {price_change_15m:+.2f}%\n\n"
 
     if price_usd > 1.2 * price_change_1h:
-        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+        message += "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
     elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        return "🛍 *Retail Arrival Detected!*"
+        message += "🛍 *Retail Arrival Detected!*"
     elif liquidity > 2000000 and volume_24h > 5000000:
-        return "🔄 *Market Maker Transfer!* 📊"
+        message += "🔄 *Market Maker Transfer!* 📊"
     elif price_usd < 0.8 * price_change_1h:
-        return "⚠️ *Dump Alert!* 💥"
+        message += "⚠️ *Dump Alert!* 💥"
     elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        return "💀 *Retail Capitulation!* 🏳️"
-    return None
+        message += "💀 *Retail Capitulation!* 🏳️"
+
+    return message
 
 
-### 🔹 Telegram Command: Fetch Alerts ###
+### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Telegram command to fetch Solana transactions and analytics, then send alerts."""
     user_id = update.message.chat_id
@@ -133,13 +143,13 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = "🔎 *Solana Analytics & Transactions*\n\n"
 
-    # 🔹 DexScreener Price Alert
+    # DexScreener Price Alert
     if pair:
         alert_message = generate_alert_message(pair)
         if alert_message:
             message += f"{alert_message}\n"
 
-    # 🔹 Recent Transactions
+    # Recent Transactions
     if transactions:
         message += "📜 *Recent Transactions:*\n"
         for tx in transactions[:5]:
@@ -149,7 +159,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message += "⚠️ No recent transactions found.\n"
 
-    # 🔹 Solana Analytics
+    # Solana Analytics
     if analytics_data:
         message += "\n📊 *Trending Analytics:*\n"
         if "trendingTokens" in analytics_data:
@@ -174,13 +184,13 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
         message = "🔎 *Solana Analytics & Transactions*\n\n"
 
-        # 🔹 DexScreener Price Alert
+        # DexScreener Price Alert
         if pair:
             alert_message = generate_alert_message(pair)
             if alert_message:
                 message += f"{alert_message}\n"
 
-        # 🔹 Recent Transactions
+        # Recent Transactions
         if transactions:
             message += "📜 *Recent Transactions:*\n"
             for tx in transactions[:5]:
@@ -190,7 +200,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         else:
             message += "⚠️ No recent transactions found.\n"
 
-        # 🔹 Solana Analytics
+        # Solana Analytics
         if analytics_data:
             message += "\n📊 *Trending Analytics:*\n"
             if "trendingTokens" in analytics_data:
@@ -202,7 +212,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(chat_id=user_id, text=escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
 
-### 🔹 Telegram Command: Fetch Token Price ###
+### Telegram Command: Fetch Token Price ###
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch token price and market data."""
     user_id = update.message.chat_id
@@ -252,7 +262,7 @@ async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
 
 
-### 🔹 Help ###
+### Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
         "📌 *Available Commands:*\n"
@@ -307,22 +317,33 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="MarkdownV2"
                 )
 
-### 🔹 Bot Main Function ###
+### Bot Main Function ###
 def main():
     """Run the Telegram bot."""
+    # Only run the bot if we're in development environment (local) or production environment (Heroku)
+    if ENVIRONMENT == "production" and not os.getenv("DYNO"):  # DYNO is set by Heroku
+        print("Production environment detected but not running on Heroku. Stopping bot to prevent conflicts.")
+        return
+    elif ENVIRONMENT == "development" and os.getenv("DYNO"):
+        print("Development environment detected but running on Heroku. Stopping bot to prevent conflicts.")
+        return
+
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     job_queue = app.job_queue
-    job_queue.run_repeating(check_alerts, interval=120, first=10)  # ✅ Auto-alert every 2 min
 
+    # Set up command handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("price", price_command))
     app.add_handler(CommandHandler("alert", alert_command))
     app.add_handler(CommandHandler("change", change_command))
-    app.add_handler(CommandHandler("subscribe_alerts", subscribe_alerts_command))
-    app.add_handler(CommandHandler("unsubscribe_alerts", unsubscribe_alerts_command))
-    
+    app.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
+    app.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
+    app.add_handler(CommandHandler("ping", ping_command))
+
+    job_queue.run_repeating(check_alerts, interval=120, first=10)  # Auto-alert every 2 min
+
+    print(f"Starting bot in {ENVIRONMENT} environment...")
     app.run_polling()
 
 
