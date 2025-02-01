@@ -41,31 +41,26 @@ def escape_md(text):
 ### Fetch Recent Solana Transactions (Helius API) ###
 def fetch_solana_transactions(wallet_address, limit=5):
     """Fetch recent transactions for a wallet using Helius RPC."""
-    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
-    
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "my-id",
-        "method": "getSignaturesForAddress",
-        "params": [
-            wallet_address,
-            {
-                "limit": limit
-            }
-        ]
-    }
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-
+    HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getSignaturesForAddress",
+            "params": [
+                wallet_address,
+                {
+                    "limit": limit,
+                    "before": "",
+                    "until": ""
+                }
+            ]
+        }
+        response = requests.post(HELIUS_RPC_URL, json=payload)
         if response.status_code == 200:
-            result = response.json()
-            if "result" in result:
-                return result["result"]
-        print(f"Helius API Error: {response.status_code} - {response.text}")
+            data = response.json()
+            if 'result' in data:
+                return data['result']
         return None
     except Exception as e:
         print(f"Error fetching transactions: {str(e)}")
@@ -325,154 +320,150 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Fetch detailed token metadata using Helius RPC."""
-    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
-    
-    print(f"\n--- Fetching metadata for token: {token_address} ---")
-    
-    # First try to get token info using getToken
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "token-1",
-        "method": "getToken",
-        "params": [token_address]
-    }
-    
+    """Enhanced token metadata fetch using paid Helius API features."""
+    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
-        print("Attempting to fetch token info...")
-        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
-        print(f"API Response Status: {response.status_code}")
-        print(f"Response content: {response.text[:500]}...")  # Print first 500 chars
+        url = f"{HELIUS_API_URL}/token-metadata?api-key={HELIUS_API_KEY}"
+        payload = {"mintAccounts": [token_address]}
+        response = requests.post(url, json=payload)
         
         if response.status_code == 200:
-            result = response.json()
-            if "error" in result:
-                print(f"Helius API Error: {result['error']}")
-            else:
-                token_data = result.get("result", {})
-                if token_data:
-                    print("Successfully fetched token data from Helius")
-                    return {
-                        "name": token_data.get("name"),
-                        "symbol": token_data.get("symbol"),
-                        "decimals": token_data.get("decimals"),
-                        "supply": token_data.get("supply"),
-                        "source": "Helius"
-                    }
-        
-        # If Helius fails, try DexScreener as fallback
-        print("Falling back to DexScreener...")
-        pair = fetch_token_data(token_address)
-        if pair:
-            print("Successfully fetched data from DexScreener")
-            base_token = pair.get("baseToken", {})
-            return {
-                "name": base_token.get("name"),
-                "symbol": base_token.get("symbol"),
-                "decimals": base_token.get("decimals"),
-                "supply": base_token.get("totalSupply"),
-                "price": pair.get("priceUsd"),
-                "volume24h": pair.get("volume", {}).get("h24"),
-                "source": "DexScreener"
-            }
-        
-        print("Failed to fetch data from both Helius and DexScreener")
+            data = response.json()
+            if data and len(data) > 0:
+                metadata = data[0]
+                return {
+                    "name": metadata.get("onChainMetadata", {}).get("metadata", {}).get("name", "Unknown"),
+                    "symbol": metadata.get("onChainMetadata", {}).get("metadata", {}).get("symbol", "Unknown"),
+                    "image": metadata.get("offChainMetadata", {}).get("image", ""),
+                    "description": metadata.get("offChainMetadata", {}).get("description", ""),
+                    "attributes": metadata.get("offChainMetadata", {}).get("attributes", []),
+                    "collection": metadata.get("onChainMetadata", {}).get("metadata", {}).get("collection", {}),
+                }
         return None
-        
     except Exception as e:
         print(f"Error fetching token metadata: {str(e)}")
-        print(f"Error type: {type(e)}")
-        if hasattr(e, '__traceback__'):
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
         return None
 
 def fetch_token_holders(token_address, limit=20):
-    """Fetch top token holders using Helius API."""
-    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
-    
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "my-id",
-        "method": "getTokenLargestAccounts",
-        "params": [token_address]
-    }
-    
+    """Enhanced token holders fetch with detailed balance information."""
+    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
-        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
+        url = f"{HELIUS_API_URL}/token-holdings?api-key={HELIUS_API_KEY}"
+        payload = {
+            "query": {
+                "tokenAccount": token_address,
+                "limit": limit,
+                "sortBy": "BALANCE",
+                "sortDirection": "DESC"
+            }
+        }
+        response = requests.post(url, json=payload)
+        
         if response.status_code == 200:
-            result = response.json().get("result", {}).get("value", [])
-            return result[:limit]
-        print(f"Helius API Error: {response.status_code} - {response.text}")
+            data = response.json()
+            holders = []
+            for holder in data.get("result", []):
+                holders.append({
+                    "owner": holder.get("owner"),
+                    "balance": holder.get("balance"),
+                    "delegated": holder.get("delegate") is not None,
+                    "frozen": holder.get("isFrozen", False)
+                })
+            return holders
         return None
     except Exception as e:
         print(f"Error fetching token holders: {str(e)}")
         return None
 
 def fetch_recent_trades(token_address, limit=10):
-    """Fetch recent large trades for a token using Helius API."""
-    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
-    
-    # First try enhanced transaction history
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "my-id",
-        "method": "searchTransactions",
-        "params": {
-            "commitment": "confirmed",
-            "limit": limit * 2,
-            "order": "desc",
-            "type": "SWAP",
-            "account": token_address
-        }
-    }
-    
+    """Enhanced recent trades fetch with DAS API integration."""
+    HELIUS_API_URL = f"https://api.helius.xyz/v0"
     try:
-        print(f"Fetching trades for token: {token_address}")
-        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
-        print(f"Helius API Response: {response.status_code}")
-        print(f"Response content: {response.text[:500]}...")  # Print first 500 chars
+        url = f"{HELIUS_API_URL}/token-transactions?api-key={HELIUS_API_KEY}"
+        payload = {
+            "query": {
+                "tokens": [token_address],
+                "transactionType": ["SWAP"],
+                "limit": limit
+            }
+        }
+        response = requests.post(url, json=payload)
         
         if response.status_code == 200:
-            result = response.json()
-            if "error" in result:
-                print(f"Helius API Error: {result['error']}")
-                return None
-                
-            transactions = result.get("result", {}).get("items", [])
-            if not transactions:
-                print("No transactions found in response")
-                return None
-            
+            data = response.json()
             trades = []
-            for tx in transactions:
-                if "tokenTransfers" in tx:
-                    for transfer in tx["tokenTransfers"]:
-                        if transfer.get("mint") == token_address:
-                            trades.append({
-                                "signature": tx["signature"],
-                                "timestamp": tx["timestamp"],
-                                "amount": float(transfer.get("tokenAmount", 0)),
-                                "type": "Buy" if transfer.get("type") == "RECEIVE" else "Sell"
-                            })
-                            break
-                    if len(trades) >= limit:
-                        break
-            
-            if trades:
-                return trades
-            
-            print("No valid trades found in transactions")
-            return None
-            
-        print(f"Helius API Error: {response.status_code} - {response.text}")
+            for tx in data.get("result", []):
+                trade_info = {
+                    "signature": tx.get("signature"),
+                    "timestamp": tx.get("timestamp"),
+                    "type": determine_trade_type(tx),
+                    "amount": extract_trade_amount(tx),
+                    "fee": tx.get("fee", 0),
+                    "success": tx.get("success", True)
+                }
+                trades.append(trade_info)
+            return trades
         return None
     except Exception as e:
         print(f"Error fetching recent trades: {str(e)}")
-        print(f"Error type: {type(e)}")
-        if hasattr(e, '__traceback__'):
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+        return None
+
+def fetch_transaction_details(signature):
+    """Enhanced transaction details fetch with enriched data."""
+    HELIUS_API_URL = f"https://api.helius.xyz/v0"
+    try:
+        url = f"{HELIUS_API_URL}/parsed-transaction?api-key={HELIUS_API_KEY}"
+        payload = {"transactions": [signature]}
+        response = requests.post(url, json=payload)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0:
+                tx = data[0]
+                return {
+                    "timestamp": tx.get("timestamp"),
+                    "fee": tx.get("fee"),
+                    "status": "success" if tx.get("success") else "failed",
+                    "type": tx.get("type", "unknown"),
+                    "instructions": tx.get("instructions", []),
+                    "tokenTransfers": tx.get("tokenTransfers", []),
+                    "nativeTransfers": tx.get("nativeTransfers", [])
+                }
+        return None
+    except Exception as e:
+        print(f"Error fetching transaction details: {str(e)}")
+        return None
+
+def fetch_liquidity_changes(token_address):
+    """Enhanced liquidity tracking with detailed pool information."""
+    HELIUS_API_URL = f"https://api.helius.xyz/v0"
+    try:
+        url = f"{HELIUS_API_URL}/token-transactions?api-key={HELIUS_API_KEY}"
+        payload = {
+            "query": {
+                "tokens": [token_address],
+                "transactionType": ["SWAP", "ADD_LIQUIDITY", "REMOVE_LIQUIDITY"],
+                "limit": 20
+            }
+        }
+        response = requests.post(url, json=payload)
+        
+        if response.status_code == 200:
+            data = response.json()
+            liquidity_events = []
+            for tx in data.get("result", []):
+                event = {
+                    "timestamp": tx.get("timestamp"),
+                    "type": tx.get("type"),
+                    "signature": tx.get("signature"),
+                    "changes": tx.get("tokenTransfers", []),
+                    "success": tx.get("success", True)
+                }
+                liquidity_events.append(event)
+            return liquidity_events
+        return None
+    except Exception as e:
+        print(f"Error fetching liquidity changes: {str(e)}")
         return None
 
 def is_trade_transaction(tx):
@@ -515,56 +506,6 @@ def extract_trade_amount(tx):
             return float(balance_change.get("uiTokenAmount", {}).get("uiAmount", 0))
     return 0
 
-def fetch_transaction_details(signature):
-    """Fetch detailed transaction information using Helius API."""
-    url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
-    
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "my-id",
-        "method": "getTransaction",
-        "params": [
-            signature,
-            {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}
-        ]
-    }
-    
-    try:
-        response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
-        if response.status_code == 200:
-            result = response.json().get("result", {})
-            return result
-        print(f"Helius API Error: {response.status_code} - {response.text}")
-        return None
-    except Exception as e:
-        print(f"Error fetching transaction details: {str(e)}")
-        return None
-
-def fetch_liquidity_changes(token_address):
-    """Track liquidity changes for a token using DexScreener and Helius data."""
-    # First get current liquidity from DexScreener
-    pair = fetch_token_data(token_address)
-    current_liquidity = float(pair.get("liquidity", {}).get("usd", 0)) if pair else 0
-    
-    # Then get recent transactions to analyze liquidity changes
-    trades = fetch_recent_trades(token_address, limit=50)
-    liquidity_events = []
-    
-    if trades:
-        for trade in trades:
-            if trade["type"] in ["Add Liquidity", "Remove Liquidity"]:
-                liquidity_events.append({
-                    "signature": trade["signature"],
-                    "timestamp": trade["timestamp"],
-                    "type": trade["type"],
-                    "amount": trade["amount"]
-                })
-    
-    return {
-        "current_liquidity": current_liquidity,
-        "recent_events": liquidity_events[:10]  # Return most recent 10 events
-    }
-
 ### New Telegram Commands ###
 
 async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -579,9 +520,9 @@ async def holders_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message = "*👥 Top Token Holders*\n\n"
     for i, holder in enumerate(holders[:10], 1):
-        amount = float(holder.get("amount", 0))
-        percent = float(holder.get("uiAmount", 0))
-        message += f"{i}. `{holder['address'][:8]}...`: {percent:.2f}% ({amount:,.0f} tokens)\n"
+        amount = float(holder.get("balance", 0))
+        percent = float(holder.get("balance", 0))
+        message += f"{i}. `{holder['owner'][:8]}...`: {percent:.2f}% ({amount:,.0f} tokens)\n"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
@@ -623,15 +564,15 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     message = "*💧 Liquidity Analysis*\n\n"
-    message += f"Current Liquidity: ${liquidity_data['current_liquidity']:,.2f}\n\n"
+    message += f"Current Liquidity: ${liquidity_data[0]['changes'][0]['amount']:,.2f}\n\n"
     
-    if liquidity_data["recent_events"]:
+    if liquidity_data:
         message += "*Recent Events:*\n"
-        for event in liquidity_data["recent_events"]:
+        for event in liquidity_data[:10]:
             timestamp = datetime.fromtimestamp(event["timestamp"]/1000).strftime("%Y-%m-%d %H:%M:%S")
             sig = event["signature"]
             emoji = "➕" if event["type"] == "Add Liquidity" else "➖"
-            message += f"{emoji} {event['type']}: {event['amount']:,.0f} tokens\n"
+            message += f"{emoji} {event['type']}: {event['changes'][0]['amount']:,.0f} tokens\n"
             message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
             message += f"📅 {timestamp}\n\n"
     else:
@@ -690,7 +631,7 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"24h Volume: {volume}\n"
     
     # Data source
-    source = metadata.get('source', 'Helius')
+    source = "Helius"
     message += f"\nData Source: {source}"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
