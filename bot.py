@@ -28,34 +28,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-# Note: In production, these environment variables are configured on Heroku
-# Required environment variables:
-# - TELEGRAM_BOT_TOKEN: The bot token from BotFather
-# - HELIUS_API_KEY: API key for Helius API
-# For local development, create a .env file with these variables
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
-HELIUS_API_URL = "https://api.helius.xyz/v0"
-
 # Default token address (EGG)
 DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"
 
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError(
-        "TELEGRAM_BOT_TOKEN is missing! "
-        "This token should be configured in your Heroku environment variables. "
-        "For local development, you can set it in a .env file."
-    )
-if not HELIUS_API_KEY:
-    raise ValueError(
-        "HELIUS_API_KEY is missing! "
-        "This token should be configured in your Heroku environment variables. "
-        "For local development, you can set it in a .env file."
-    )
-
 # Helius API endpoints
-HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
+HELIUS_API_URL = "https://api.helius.xyz/v0"
 
 ### --- MarkdownV2 Escaping Function --- ###
 def escape_md(text):
@@ -1077,8 +1054,28 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
 def main():
     """Run the Telegram bot."""
     try:
-        print("Starting bot in production environment...")
+        # Check for required environment variables
+        TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+        HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+        HELIUS_RPC_URL = os.getenv("HELIUS_RPC_URL")
         
+        if not TELEGRAM_BOT_TOKEN:
+            raise ValueError(
+                "TELEGRAM_BOT_TOKEN is missing! This token should be configured in your Heroku environment variables. "
+                "For local development, you can set it in a .env file."
+            )
+        if not HELIUS_API_KEY:
+            raise ValueError(
+                "HELIUS_API_KEY is missing! This token should be configured in your Heroku environment variables. "
+                "For local development, you can set it in a .env file."
+            )
+        if not HELIUS_RPC_URL:
+            raise ValueError(
+                "HELIUS_RPC_URL is missing! This token should be configured in your Heroku environment variables. "
+                "For local development, you can set it in a .env file."
+            )
+        
+        # Create the bot application
         application = (
             ApplicationBuilder()
             .token(TELEGRAM_BOT_TOKEN)
