@@ -38,22 +38,13 @@ def escape_md(text):
 
 ### Fetch Recent Solana Transactions (Helius API) ###
 def fetch_solana_transactions(wallet_address, limit=5):
-    url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "1",
-        "method": "getSignaturesForAddress",
-        "params": [
-            wallet_address,
-            {"limit": limit}
-        ]
-    }
+    url = f"https://api.helius.xyz/v0/accounts/{wallet_address}/transactions?api-key={HELIUS_API_KEY}"
     headers = {"Content-Type": "application/json"}
 
-    response = requests.post(url, headers=headers, data=json.dumps(payload))
+    response = requests.get(url, headers=headers)
     
     if response.status_code == 200:
-        return response.json().get("result", [])
+        return response.json().get("transactions", [])
     else:
         print(f"Helius API Error: {response.status_code} - {response.text}")
         return None
@@ -62,23 +53,14 @@ def fetch_solana_transactions(wallet_address, limit=5):
 transactions = fetch_solana_transactions(WALLET_ADDRESS)
 if transactions:
     for tx in transactions:
-        print(f"Signature: {tx['signature']}, Slot: {tx['slot']}")
+        print(f"Signature: {tx['transaction']['signatures'][0]}, Slot: {tx['slot']}")
 
 
 ### Fetch Solana Analytics (Helius API) ###
 def fetch_solana_analytics():
-    """Fetch trending Solana analytics, including trending wallets, token activity, and NFT transfers."""
-    url = f"https://api.helius.xyz/v0/analytics?api-key={HELIUS_API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Helius Analytics API Error: {response.status_code} - {response.text}")
-        return None
-
+    """Fetch trending Solana analytics."""
+    # Currently not implemented as the analytics endpoint is not available
+    return None
 
 ### Fetch Token Price (DexScreener API) ###
 def fetch_token_data(token_address):
@@ -110,65 +92,52 @@ def generate_alert_message(pair):
     price_change_5m = float(pair.get("priceChange", {}).get("m5", 0))  # 5-minute change
     
     # Calculate approximate 15-minute change using 5-minute data
-    # If 5-minute data shows a trend, multiply by 3 to estimate 15-minute change
     price_change_15m = price_change_5m * 3
 
     message = f"💰 *Price Update*\n"
     message += f"Current Price: ${price_usd:.6f}\n"
-    message += f"15min Change: {price_change_15m:+.2f}%\n\n"
+    message += f"15min Change: {price_change_15m:+.2f}%\n"
+    message += f"1h Change: {price_change_1h:+.2f}%\n"
+    message += f"24h Volume: ${volume_24h:,.2f}\n"
+    message += f"Liquidity: ${liquidity:,.2f}\n"
 
-    if price_usd > 1.2 * price_change_1h:
-        message += "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
-    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
-        message += "🛍 *Retail Arrival Detected!*"
-    elif liquidity > 2000000 and volume_24h > 5000000:
-        message += "🔄 *Market Maker Transfer!* 📊"
-    elif price_usd < 0.8 * price_change_1h:
-        message += "⚠️ *Dump Alert!* 💥"
-    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
-        message += "💀 *Retail Capitulation!* 🏳️"
+    # Add alerts based on conditions
+    if abs(price_change_15m) > 10:  # More than 10% change in 15 minutes
+        message += "\n🚨 *Significant Price Movement!*"
+    if price_change_15m > 5:  # More than 5% increase
+        message += "\n📈 *Upward Trend*"
+    elif price_change_15m < -5:  # More than 5% decrease
+        message += "\n📉 *Downward Trend*"
 
     return message
 
-
 ### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Telegram command to fetch Solana transactions and analytics, then send alerts."""
+    """Telegram command to fetch token price and transaction data."""
     user_id = update.message.chat_id
     wallet_address = DEFAULT_WALLET
     token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
 
     pair = fetch_token_data(token_address)
     transactions = fetch_solana_transactions(wallet_address)
-    analytics_data = fetch_solana_analytics()
 
-    message = "🔎 *Solana Analytics & Transactions*\n\n"
+    message = "🔎 *Token Analytics & Transactions*\n\n"
 
     # DexScreener Price Alert
     if pair:
         alert_message = generate_alert_message(pair)
         if alert_message:
-            message += f"{alert_message}\n"
+            message += f"{alert_message}\n\n"
 
     # Recent Transactions
     if transactions:
         message += "📜 *Recent Transactions:*\n"
         for tx in transactions[:5]:
-            tx_hash = tx.get("signature", "Unknown TX")
+            tx_hash = tx.get("transaction", {}).get("signatures", [])[0]
             slot = tx.get("slot", "N/A")
             message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
     else:
         message += "⚠️ No recent transactions found.\n"
-
-    # Solana Analytics
-    if analytics_data:
-        message += "\n📊 *Trending Analytics:*\n"
-        if "trendingTokens" in analytics_data:
-            message += "🔸 *Trending Tokens:*\n"
-            for token in analytics_data["trendingTokens"][:5]:
-                symbol = token.get("symbol", "Unknown")
-                volume = token.get("volume", 0)
-                message += f"  • {symbol}: ${volume:,}\n"
 
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
 
@@ -181,35 +150,24 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 
         pair = fetch_token_data(token_address)
         transactions = fetch_solana_transactions(wallet_address)
-        analytics_data = fetch_solana_analytics()
 
-        message = "🔎 *Solana Analytics & Transactions*\n\n"
+        message = "🔎 *Token Analytics & Transactions*\n\n"
 
         # DexScreener Price Alert
         if pair:
             alert_message = generate_alert_message(pair)
             if alert_message:
-                message += f"{alert_message}\n"
+                message += f"{alert_message}\n\n"
 
         # Recent Transactions
         if transactions:
             message += "📜 *Recent Transactions:*\n"
             for tx in transactions[:5]:
-                tx_hash = tx.get("signature", "Unknown TX")
+                tx_hash = tx.get("transaction", {}).get("signatures", [])[0]
                 slot = tx.get("slot", "N/A")
                 message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
         else:
             message += "⚠️ No recent transactions found.\n"
-
-        # Solana Analytics
-        if analytics_data:
-            message += "\n📊 *Trending Analytics:*\n"
-            if "trendingTokens" in analytics_data:
-                message += "🔸 *Trending Tokens:*\n"
-                for token in analytics_data["trendingTokens"][:5]:
-                    symbol = token.get("symbol", "Unknown")
-                    volume = token.get("volume", 0)
-                    message += f"  • {symbol}: ${volume:,}\n"
 
         await context.bot.send_message(chat_id=user_id, text=escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
 
