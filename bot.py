@@ -138,6 +138,46 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
 
 
+async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+    """Background job to fetch Solana transactions & send alerts to subscribed users."""
+    for user_id in subscribed_users.keys():
+        wallet_address = DEFAULT_WALLET
+        token_address = user_addresses.get(user_id, DEFAULT_TOKEN_ADDRESS)
+
+        pair = fetch_token_data(token_address)
+        transactions = fetch_solana_transactions(wallet_address)
+        analytics_data = fetch_solana_analytics()
+
+        message = "🔎 *Solana Analytics & Transactions*\n\n"
+
+        # 🔹 DexScreener Price Alert
+        if pair:
+            alert_message = generate_alert_message(pair)
+            if alert_message:
+                message += f"{alert_message}\n"
+
+        # 🔹 Recent Transactions
+        if transactions:
+            message += "📜 *Recent Transactions:*\n"
+            for tx in transactions[:5]:
+                tx_hash = tx.get("signature", "Unknown TX")
+                slot = tx.get("slot", "N/A")
+                message += f"🔹 TX: [{tx_hash[:10]}...](https://explorer.solana.com/tx/{tx_hash}) (Slot {slot})\n"
+        else:
+            message += "⚠️ No recent transactions found.\n"
+
+        # 🔹 Solana Analytics
+        if analytics_data:
+            message += "\n📊 *Trending Analytics:*\n"
+            if "trendingTokens" in analytics_data:
+                message += "🔸 *Trending Tokens:*\n"
+                for token in analytics_data["trendingTokens"][:5]:
+                    symbol = token.get("symbol", "Unknown")
+                    volume = token.get("volume", 0)
+                    message += f"  • {symbol}: ${volume:,}\n"
+
+        await context.bot.send_message(chat_id=user_id, text=escape_md(message), parse_mode="MarkdownV2", disable_web_page_preview=True)
+
 ### 🔹 Telegram Command: Fetch Token Price ###
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Fetch token price and market data."""
@@ -169,7 +209,7 @@ def main():
     """Run the Telegram bot."""
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     job_queue = app.job_queue
-    job_queue.run_repeating(alert_command, interval=120, first=10)  # ✅ Auto-alert every 2 min
+    job_queue.run_repeating(check_alerts, interval=120, first=10)  # ✅ Auto-alert every 2 min
 
     app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("Hello! I will notify you about token activity.")))
     app.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text("Use /price or /alert to get updates.")))
