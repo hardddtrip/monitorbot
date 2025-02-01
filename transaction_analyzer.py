@@ -114,8 +114,8 @@ class TransactionAnalyzer:
             all_transactions.extend(transactions)
             
             # Stop if we have enough transactions
-            # Assuming max 20 tx/min as a reasonable limit
-            if len(all_transactions) >= minutes * 20:
+            # Up to 100 tx/min for high-volume tokens
+            if len(all_transactions) >= minutes * 100:
                 break
             
             before_tx = transactions[-1].get('signature')
