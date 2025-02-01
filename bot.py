@@ -1,24 +1,26 @@
 import os
-import json
+import sys
 import time
+import json
 import requests
+from datetime import datetime
+import telegram
 from telegram import Update
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
+    CallbackContext,
     CommandHandler,
-    ContextTypes,
-    JobQueue,
-    CallbackContext
+    ContextTypes
 )
-from telegram.error import Conflict, TimedOut
-from datetime import datetime
-import sys
 
 # Load environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Helius API Key
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")  # Add environment variable
-DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"  # EGG token
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+HELIUS_API_URL = "https://api.helius.xyz/v0"
+
+# Default token address (EGG)
+DEFAULT_TOKEN_ADDRESS = "EfgEGG9PxLhyk1wqtqgGnwgfVC7JYic3vC9BCWLvpump"
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN is missing! Set it in your environment variables.")
@@ -26,7 +28,6 @@ if not HELIUS_API_KEY:
     raise ValueError("HELIUS_API_KEY is missing! Set it in your environment variables.")
 
 # Helius API endpoints
-HELIUS_API_URL = "https://api.helius.xyz/v0"
 HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
 
 ### --- MarkdownV2 Escaping Function --- ###
@@ -600,8 +601,7 @@ def main():
             .read_timeout(30)
             .write_timeout(30)
             .pool_timeout(30)
-            .get_updates_request_timeout(30)
-            .get_updates_connection_retry_after(1.0)  # Retry after 1 second
+            .get_updates_connect_timeout(30)
             .get_updates_read_timeout(30)
             .get_updates_write_timeout(30)
             .get_updates_pool_timeout(30)
@@ -626,21 +626,18 @@ def main():
             close_loop=False  # Don't close the event loop
         )
 
-    except telegram.error.Conflict as e:
-        print(f"Conflict error: {e}. Waiting for other instance to terminate...")
-        time.sleep(10)  # Wait 10 seconds before exiting
-        sys.exit(1)
     except Exception as e:
         print(f"Error starting bot: {e}")
+        time.sleep(10)  # Wait before exiting to avoid rapid restarts
         sys.exit(1)
 
 def error_handler(update: Update, context: CallbackContext) -> None:
     """Handle errors in the telegram bot."""
     print(f"Update {update} caused error {context.error}")
     try:
-        if isinstance(context.error, Conflict):
+        if isinstance(context.error, telegram.error.Conflict):
             print("Conflict error: Another instance of the bot is already running")
-        elif isinstance(context.error, TimedOut):
+        elif isinstance(context.error, telegram.error.TimedOut):
             print("Request timed out. Will retry automatically.")
         elif isinstance(context.error, (ValueError, TypeError)):
             print(f"Value/Type error: {str(context.error)}")
