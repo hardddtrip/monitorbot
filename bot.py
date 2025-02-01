@@ -720,60 +720,35 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to fetch token data")
             return
 
-        # Market metrics
-        price_usd = float(pair.get("priceUsd", 0))
-        volume_24h = float(pair.get("volume", {}).get("h24", 0))
-        volume_1h = float(pair.get("volume", {}).get("h1", 0))
-        liquidity = float(pair.get("liquidity", {}).get("usd", 0))
-        market_cap = float(pair.get("marketCap", 0))
-        fdv = float(pair.get("fdv", 0))
-        
-        # Price changes
-        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-        price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
-        price_change_7d = float(pair.get("priceChange", {}).get("d7", 0))
-        
-        # Transaction counts
-        txns_24h = pair.get("txns", {}).get("h24", {})
-        txns_1h = pair.get("txns", {}).get("h1", {})
-        buys_24h = int(txns_24h.get("buys", 0))
-        sells_24h = int(txns_24h.get("sells", 0))
-        buys_1h = int(txns_1h.get("buys", 0))
-        sells_1h = int(txns_1h.get("sells", 0))
-
-        # Fetch token metadata and info
-        token_info = fetch_token_info(token_address)
-        if not token_info:
-            token_info = {}  # Use empty dict to avoid NoneType errors
-
         # Build message sections
         sections = []
 
         # Token Information section
+        info = pair.get('info', {})
         token_info_section = "*Token Information*\n"
         token_info_section += (
-            f"• Name: {token_info.get('name', 'Unknown')}\n"
-            f"• Symbol: {token_info.get('symbol', 'Unknown')}\n"
+            f"• Name: {info.get('name', 'Unknown')}\n"
+            f"• Symbol: {info.get('symbol', 'Unknown')}\n"
+            f"• Created: {datetime.fromtimestamp(int(pair.get('pairCreatedAt', 0)/1000)).strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"• DEX: {pair.get('dexId', 'Unknown').title()}\n"
         )
-        
-        # Only add supply info if available
-        supply = token_info.get('supply')
-        decimals = token_info.get('decimals')
-        if supply is not None and decimals is not None:
-            token_info_section += f"• Supply: {float(supply)/(10**decimals):,.0f}\n"
-        
-        # Add holder count if available
-        holder_count = token_info.get('holder_count')
-        if holder_count is not None:
-            token_info_section += f"• Holders: {holder_count:,}\n"
-            
         sections.append(token_info_section)
 
         # Market Metrics section
+        price_usd = float(pair.get("priceUsd", 0))
+        volume_24h = float(pair.get("volume", {}).get("h24", 0))
+        volume_1h = float(pair.get("volume", {}).get("h1", 0))
+        volume_5m = float(pair.get("volume", {}).get("m5", 0))
+        liquidity = float(pair.get("liquidity", {}).get("usd", 0))
+        market_cap = float(pair.get("marketCap", 0))
+        fdv = float(pair.get("fdv", 0))
+
         market_section = (
             "*Market Metrics*\n"
             f"• Price: ${price_usd:.6f}\n"
             f"• 24h Volume: ${volume_24h:,.2f}\n"
+            f"• 1h Volume: ${volume_1h:,.2f}\n"
+            f"• 5m Volume: ${volume_5m:,.2f}\n"
             f"• Liquidity: ${liquidity:,.2f}\n"
             f"• Market Cap: ${market_cap:,.2f}\n"
             f"• FDV: ${fdv:,.2f}\n"
@@ -781,48 +756,88 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sections.append(market_section)
 
         # Price Changes section
+        price_change = pair.get('priceChange', {})
         price_section = (
             "*Price Changes*\n"
-            f"• 1h: {price_change_1h:+.2f}%\n"
-            f"• 24h: {price_change_24h:+.2f}%\n"
-            f"• 7d: {price_change_7d:+.2f}%\n"
+            f"• 5m: {price_change.get('m5', 0):+.2f}%\n"
+            f"• 1h: {price_change.get('h1', 0):+.2f}%\n"
+            f"• 6h: {price_change.get('h6', 0):+.2f}%\n"
+            f"• 24h: {price_change.get('h24', 0):+.2f}%\n"
+            f"• 7d: {price_change.get('d7', 0):+.2f}%\n"
         )
         sections.append(price_section)
 
         # Trading Activity section
+        txns = pair.get('txns', {})
+        h24 = txns.get('h24', {})
+        h1 = txns.get('h1', {})
+        buys_24h = int(h24.get('buys', 0))
+        sells_24h = int(h24.get('sells', 0))
+        buys_1h = int(h1.get('buys', 0))
+        sells_1h = int(h1.get('sells', 0))
+        
         activity_section = (
             "*Trading Activity*\n"
-            f"• 24h Buys: {buys_24h}\n"
-            f"• 24h Sells: {sells_24h}\n"
-            f"• 1h Buys: {buys_1h}\n"
-            f"• 1h Sells: {sells_1h}\n"
+            f"• 24h Transactions: {buys_24h + sells_24h:,}\n"
+            f"  - Buys: {buys_24h:,} ({buys_24h/(buys_24h + sells_24h)*100:.1f}%)\n"
+            f"  - Sells: {sells_24h:,} ({sells_24h/(buys_24h + sells_24h)*100:.1f}%)\n"
+            f"• 1h Transactions: {buys_1h + sells_1h:,}\n"
+            f"  - Buys: {buys_1h:,} ({buys_1h/(buys_1h + sells_1h)*100:.1f}%)\n"
+            f"  - Sells: {sells_1h:,} ({sells_1h/(buys_1h + sells_1h)*100:.1f}%)\n"
+            f"• Buy/Sell Ratio 24h: {buys_24h/sells_24h:.2f}\n"
+            f"• Buy/Sell Ratio 1h: {buys_1h/sells_1h:.2f}\n"
         )
         sections.append(activity_section)
+
+        # Social Links section
+        social_section = "*Social Links*\n"
+        websites = info.get('websites', [])
+        socials = info.get('socials', [])
+        
+        if websites:
+            social_section += "• Websites:\n"
+            for website in websites:
+                social_section += f"  - {website.get('url')}\n"
+                
+        if socials:
+            social_section += "• Social Media:\n"
+            for social in socials:
+                social_section += f"  - {social.get('type').title()}: {social.get('url')}\n"
+                
+        if websites or socials:
+            sections.append(social_section)
 
         # Risk Analysis section
         risks = []
         
-        # Check for mintable token
-        if token_info.get('is_mintable'):
-            risks.append("Token is mintable - supply can be increased")
+        # Age risk
+        pair_age_hours = (datetime.now().timestamp() - int(pair.get('pairCreatedAt', 0)/1000)) / 3600
+        if pair_age_hours < 24:
+            risks.append(f"New token - only {pair_age_hours:.1f} hours old")
             
-        # Check for freezable token
-        if token_info.get('is_freezable'):
-            risks.append("Token has freeze authority - transfers can be disabled")
-            
-        # Check for low liquidity
+        # Liquidity risk
         if liquidity < 50000:
-            risks.append("Low liquidity - high price impact on trades")
+            risks.append(f"Low liquidity (${liquidity:,.2f}) - high price impact on trades")
             
-        # Check for high price volatility
-        if abs(price_change_1h) > 20:
-            risks.append(f"High volatility - {abs(price_change_1h):.1f}% price change in 1h")
+        # Volume vs Liquidity risk
+        if volume_24h > liquidity * 10:
+            risks.append(f"High volume/liquidity ratio ({volume_24h/liquidity:.1f}x) - potential manipulation")
             
-        # Check for suspicious trading patterns
-        if buys_1h > 1000 and price_change_1h > 30:
+        # Price volatility risk
+        if abs(float(price_change.get('h1', 0))) > 20:
+            risks.append(f"High volatility - {abs(float(price_change.get('h1', 0))):.1f}% price change in 1h")
+            
+        # Trading pattern risks
+        if buys_1h > 1000 and float(price_change.get('h1', 0)) > 30:
             risks.append("Potential pump - high buy pressure and price increase")
-        elif sells_1h > 1000 and price_change_1h < -30:
+        elif sells_1h > 1000 and float(price_change.get('h1', 0)) < -30:
             risks.append("Potential dump - high sell pressure and price decrease")
+            
+        # Buy/Sell ratio risks
+        if buys_24h/sells_24h > 3:
+            risks.append(f"Unusual buy pressure - {buys_24h/sells_24h:.1f}x more buys than sells")
+        elif sells_24h/buys_24h > 3:
+            risks.append(f"Unusual sell pressure - {sells_24h/buys_24h:.1f}x more sells than buys")
 
         risk_section = "*Risk Analysis*\n"
         if risks:
