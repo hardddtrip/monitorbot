@@ -89,45 +89,22 @@ def generate_alert_message(pair):
     if not pair or "priceUsd" not in pair:
         return None
 
-    price_usd = float(pair.get("priceUsd", 0))
+    price_usd = float(pair["priceUsd"])
+    volume_24h = float(pair["volume"]["h24"])
+    liquidity = float(pair["liquidity"]["usd"])
     price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-    volume_24h = float(pair.get("volume", {}).get("h24", 0))
-    liquidity = float(pair.get("liquidity", {}).get("usd", 0))
-    buys_1h = int(pair.get("txns", {}).get("h1", {}).get("buys", 0))
-    sells_1h = int(pair.get("txns", {}).get("h1", {}).get("sells", 0))
 
-    # Initialize alert message
-    alert_message = ""
-
-    # Market condition alerts
-    if price_change_1h > 0 and price_usd > 1.2 * (price_usd - price_change_1h):
-        alert_message += "📈 *Pump Alert!* 🚀\nRapid price increase detected!\n\n"
-    elif price_change_1h < 0 and price_usd < 0.8 * (price_usd - price_change_1h):
-        alert_message += "⚠️ *Dump Alert!* 💥\nSignificant price decrease!\n\n"
-
-    # Trading activity alerts
-    if buys_1h > 500 and volume_24h < 1000000:
-        alert_message += "🛍 *Retail Arrival Detected!*\nHigh number of buy transactions.\n\n"
-    elif sells_1h > 1000 and volume_24h < 500000:
-        alert_message += "💀 *Retail Capitulation!* 🏳️\nMass selling detected.\n\n"
-
-    # Liquidity alerts
-    if liquidity > 2000000 and volume_24h > 5000000:
-        alert_message += "🔄 *Market Maker Activity!* 📊\nHigh liquidity movement.\n\n"
-
-    # Base price information
-    base_info = (
-        f"💰 *Price*: ${price_usd:.6f}\n"
-        f"📊 *1h Change*: {price_change_1h:.2f}%\n"
-        f"💧 *Liquidity*: ${liquidity:,.0f}\n"
-        f"📈 *24h Volume*: ${volume_24h:,.0f}\n"
-        f"🔄 *1h Transactions*:\n"
-        f"  • Buys: {buys_1h}\n"
-        f"  • Sells: {sells_1h}\n"
-    )
-
-    return alert_message + base_info if alert_message else base_info
-
+    if price_usd > 1.2 * price_change_1h:
+        return "📈 *Pump Alert!* 🚀\nRapid price increase detected!"
+    elif pair["txns"]["h1"]["buys"] > 500 and volume_24h < 1000000:
+        return "🛍 *Retail Arrival Detected!*"
+    elif liquidity > 2000000 and volume_24h > 5000000:
+        return "🔄 *Market Maker Transfer!* 📊"
+    elif price_usd < 0.8 * price_change_1h:
+        return "⚠️ *Dump Alert!* 💥"
+    elif pair["txns"]["h1"]["sells"] > 1000 and volume_24h < 500000:
+        return "💀 *Retail Capitulation!* 🏳️"
+    return None
 
 ### Telegram Command: Fetch Alerts ###
 async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,17 +122,33 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to fetch token data")
             return
 
-        # Generate price alert message
-        price_message = generate_alert_message(pair)
+        # Generate alert message
+        alert_message = generate_alert_message(pair)
+        
+        # Generate price info
+        price_usd = float(pair.get("priceUsd", 0))
+        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
+        volume_24h = float(pair.get("volume", {}).get("h24", 0))
+        liquidity = float(pair.get("liquidity", {}).get("usd", 0))
+        buys_1h = int(pair.get("txns", {}).get("h1", {}).get("buys", 0))
+        sells_1h = int(pair.get("txns", {}).get("h1", {}).get("sells", 0))
+
+        price_info = (
+            f"💰 *Price*: ${price_usd:.6f}\n"
+            f"📊 *1h Change*: {price_change_1h:.2f}%\n"
+            f"💧 *Liquidity*: ${liquidity:,.0f}\n"
+            f"📈 *24h Volume*: ${volume_24h:,.0f}\n"
+            f"🔄 *1h Transactions*:\n"
+            f"  • Buys: {buys_1h}\n"
+            f"  • Sells: {sells_1h}\n"
+        )
         
         # Get recent trades
         trades = await fetch_recent_trades(token_address)
-        
-        # Generate trade alert message
-        trade_message = "\n\n" + generate_trade_alert_message(trades)
+        trade_message = "\n\n" + generate_trade_alert_message(trades) if trades else ""
         
         # Combine messages
-        full_message = price_message + trade_message
+        full_message = f"{alert_message}\n\n{price_info}{trade_message}" if alert_message else f"{price_info}{trade_message}"
         
         await update.message.reply_text(
             text=escape_md(full_message),
