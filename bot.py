@@ -376,28 +376,91 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Fetch token metadata using Helius API"""
+    """Fetch comprehensive token metadata using Helius APIs"""
     try:
         helius_api_key = os.getenv("HELIUS_API_KEY")
         if not helius_api_key:
             logging.warning("HELIUS_API_KEY not found in environment variables")
             return {}
             
-        url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
-        response = requests.post(url, json={"mintAccounts": [token_address]})
-        data = response.json()
+        # 1. Get basic token metadata
+        metadata_url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
+        metadata_response = requests.post(metadata_url, json={"mintAccounts": [token_address]})
+        metadata = metadata_response.json()
         
-        if not data or not isinstance(data, list) or len(data) == 0:
+        # 2. Get DAS asset data
+        das_url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
+        das_response = requests.get(
+            f"https://api.helius.xyz/v0/addresses/{token_address}/assets?api-key={helius_api_key}",
+            params={"displayOptions": {"showFungible": True}}
+        )
+        das_data = das_response.json()
+        
+        # 3. Get token balances and holders
+        balances_url = f"https://api.helius.xyz/v0/addresses/{token_address}/balances?api-key={helius_api_key}"
+        balances_response = requests.get(balances_url)
+        balances_data = balances_response.json()
+        
+        if not metadata or not isinstance(metadata, list) or len(metadata) == 0:
             return {}
             
-        metadata = data[0].get("onChainMetadata", {})
+        token_metadata = metadata[0].get("onChainMetadata", {})
+        token_das = das_data[0] if das_data and len(das_data) > 0 else {}
+        
+        # Extract creator info
+        creators = token_metadata.get("metadata", {}).get("creators", [])
+        verified_creators = [c for c in creators if c.get("verified", False)]
+        
+        # Get token standard (Token2022 vs regular SPL)
+        token_standard = token_das.get("interface", "SPL")
+        
+        # Get extensions if Token2022
+        extensions = []
+        if token_standard == "Token2022":
+            raw_extensions = token_das.get("extensions", {})
+            if raw_extensions.get("transferFee"):
+                extensions.append("Transfer Fee")
+            if raw_extensions.get("permanentDelegate"):
+                extensions.append("Permanent Delegate")
+            if raw_extensions.get("interestBearing"):
+                extensions.append("Interest Bearing")
+            if raw_extensions.get("nonTransferable"):
+                extensions.append("Non-Transferable")
+            if raw_extensions.get("defaultState"):
+                extensions.append("Default State")
+        
         return {
-            "name": metadata.get("metadata", {}).get("name"),
-            "symbol": metadata.get("metadata", {}).get("symbol"),
-            "decimals": metadata.get("metadata", {}).get("decimals"),
-            "supply": metadata.get("supply"),
-            "mintAuthority": metadata.get("mintAuthority"),
-            "freezeAuthority": metadata.get("freezeAuthority")
+            # Basic info
+            "name": token_metadata.get("metadata", {}).get("name"),
+            "symbol": token_metadata.get("metadata", {}).get("symbol"),
+            "decimals": token_metadata.get("metadata", {}).get("decimals"),
+            "supply": token_metadata.get("supply"),
+            
+            # Authority info
+            "mintAuthority": token_metadata.get("mintAuthority"),
+            "freezeAuthority": token_metadata.get("freezeAuthority"),
+            "updateAuthority": token_metadata.get("metadata", {}).get("updateAuthority"),
+            
+            # Creator info
+            "creators": creators,
+            "verified_creators": verified_creators,
+            "royalties": token_metadata.get("metadata", {}).get("sellerFeeBasisPoints", 0) / 100,
+            
+            # Token standard and features
+            "token_standard": token_standard,
+            "extensions": extensions,
+            
+            # Holder statistics
+            "holder_count": balances_data.get("numHolders", 0),
+            "largest_holders": balances_data.get("items", [])[:5],  # Top 5 holders
+            
+            # Additional metadata
+            "description": token_metadata.get("metadata", {}).get("description"),
+            "image": token_metadata.get("metadata", {}).get("image"),
+            "external_url": token_metadata.get("metadata", {}).get("external_url"),
+            
+            # Collection info if part of one
+            "collection": token_metadata.get("metadata", {}).get("collection", {})
         }
         
     except Exception as e:
@@ -645,7 +708,6 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Original metrics calculation...
-        {{ ... }}
         
         # Add token info section
         token_info_section = "*Token Information*\n"
@@ -654,31 +716,53 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Name: {token_info['name']}\n"
                 f"• Symbol: {token_info['symbol']}\n"
                 f"• Supply: {float(token_info['supply'])/(10**token_info['decimals']):,.0f}\n"
-                f"• Mintable: {'Yes ⚠️' if token_info['is_mintable'] else 'No ✅'}\n"
-                f"• Freezable: {'Yes ⚠️' if token_info['is_freezable'] else 'No ✅'}\n"
+                f"• Holders: {token_info['holder_count']:,}\n"
+                f"• Token Standard: {token_info['token_standard']}\n\n"
+                
+                "*Authority Info*\n"
+                f"• Mintable: {'Yes ⚠️' if token_info['mintAuthority'] else 'No ✅'}\n"
+                f"• Freezable: {'Yes ⚠️' if token_info['freezeAuthority'] else 'No ✅'}\n"
+                f"• Update Authority: {token_info['updateAuthority'][:4]}...{token_info['updateAuthority'][-4:]}\n"
             )
             
-            # Add social links and presence
-            social_section = "\n*Social Presence*\n"
-            if token_info['website']:
-                social_section += f"• Website: [Link]({token_info['website']})\n"
-            if token_info['twitter']:
-                social_section += f"• Twitter: [Link]({token_info['twitter']})"
-                if token_info['twitter_followers']:
-                    social_section += f" ({token_info['twitter_followers']:,} followers)"
-                social_section += "\n"
-            if token_info['tiktok']:
-                social_section += f"• TikTok: [Link]({token_info['tiktok']})\n"
+            # Add Token2022 Extensions if any
+            if token_info['extensions']:
+                token_info_section += "\n*Token Extensions*\n"
+                for ext in token_info['extensions']:
+                    token_info_section += f"• {ext} ⚠️\n"
             
-            # Add description if available
-            if token_info['description']:
-                social_section += f"\n*Description*\n{token_info['description']}\n"
+            # Add creator info
+            token_info_section += "\n*Creator Information*\n"
+            if token_info['creators']:
+                token_info_section += (
+                    f"• Royalties: {token_info['royalties']}%\n"
+                    f"• Verified Creators: {len(token_info['verified_creators'])}\n"
+                )
+            else:
+                token_info_section += "• No creator information available\n"
+            
+            # Add top holders
+            token_info_section += "\n*Top Holders*\n"
+            for idx, holder in enumerate(token_info['largest_holders'], 1):
+                amount = float(holder.get('amount', 0)) / (10**token_info['decimals'])
+                percentage = holder.get('percentage', 0)
+                address = holder.get('owner', '')
+                token_info_section += f"• #{idx}: {address[:4]}...{address[-4:]} ({percentage:.1f}% - {amount:,.0f} tokens)\n"
+            
+            # Add collection info if available
+            if token_info.get('collection'):
+                token_info_section += "\n*Collection Info*\n"
+                collection = token_info['collection']
+                token_info_section += (
+                    f"• Name: {collection.get('name', 'N/A')}\n"
+                    f"• Family: {collection.get('family', 'N/A')}\n"
+                )
         else:
             token_info_section += "❌ Token information unavailable\n"
         
         # Insert token info section before risk factors
         audit_message = audit_message.rsplit("*Risk Factors*", 1)[0] if "*Risk Factors*" in audit_message else audit_message
-        audit_message += "\n" + token_info_section + social_section
+        audit_message += "\n" + token_info_section
         
         if risk_factors:
             audit_message += "\n*Risk Factors*\n" + "\n".join(risk_factors)
