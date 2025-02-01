@@ -921,19 +921,23 @@ async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message += f"*Overview*:\n"
     message += f"• Total Transactions: {analysis['transaction_count']}\n"
     message += f"• Active Wallets: {analysis['active_wallets']}\n"
-    message += f"• Trading Velocity: {analysis['trading_velocity']:.2f} tx/min\n\n"
+    message += f"• Trading Velocity: {analysis['trading_velocity']:.2f} tx/min\n"
+    message += f"• Total Volume: {analysis['total_volume']:.2f} SOL\n\n"
     
-    message += f"*Transaction Patterns*:\n"
-    patterns = analysis['patterns']
-    message += f"• Swaps: {patterns['swaps']}\n"
-    message += f"• Rapid Swaps: {patterns['rapid_swaps']}\n"
-    message += f"• Bot Trades: {patterns['bot_trades']}\n"
-    message += f"• Wash Trades: {patterns['wash_trades']}\n"
-    message += f"• Sandwich Attacks: {patterns['sandwich_attacks']}\n"
-    message += f"• Flash Loans: {patterns['flash_loans']}\n"
-    message += f"• High Slippage: {patterns['high_slippage']}\n"
-    message += f"• Arbitrage: {patterns['arbitrage']}\n"
-    message += f"• Failed Transactions: {patterns['failed']}\n\n"
+    message += f"*Volume Distribution*:\n"
+    volume_dist = analysis['volume_distribution']
+    message += f"• Very Small (<0.1 SOL): {volume_dist['very_small']['count']} txs ({volume_dist['very_small']['amount']:.2f} SOL)\n"
+    message += f"• Small (0.1-1 SOL): {volume_dist['small']['count']} txs ({volume_dist['small']['amount']:.2f} SOL)\n"
+    message += f"• Medium (1-10 SOL): {volume_dist['medium']['count']} txs ({volume_dist['medium']['amount']:.2f} SOL)\n"
+    message += f"• Large (10-100 SOL): {volume_dist['large']['count']} txs ({volume_dist['large']['amount']:.2f} SOL)\n"
+    message += f"• Very Large (>100 SOL): {volume_dist['very_large']['count']} txs ({volume_dist['very_large']['amount']:.2f} SOL)\n\n"
+
+    message += f"*Trader Categories*:\n"
+    categories = analysis['trader_categories']
+    for cat_name, cat_data in categories.items():
+        if cat_data['count'] > 0:
+            message += f"• {cat_name.replace('_', ' ').title()}: {cat_data['count']} traders\n"
+            message += f"  - Volume: {cat_data['volume']:.2f} SOL (Buy: {cat_data['buys']:.2f}, Sell: {cat_data['sells']:.2f})\n"
     
     message += f"*Suspicious Wallets*:\n"
     suspicious = analysis['suspicious_wallets']
