@@ -509,19 +509,27 @@ async def fetch_recent_trades(token_address, limit=10):
         current_price = float(pair.get("priceUsd", 0))
         
         # Construct API URL
-        url = f"{HELIUS_API_URL}/addresses/{token_address}/transactions"
+        url = "https://api.helius.xyz/v0/addresses"
         
         # Set up parameters
-        params = {
-            "api-key": HELIUS_API_KEY,
-            "type": ["SWAP"],  # Focus on swaps only for more accurate trade data
-            "limit": limit * 2  # Fetch more to account for filtered transactions
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "searchAssetTransfers",
+            "params": {
+                "query": {
+                    "ownerAddress": token_address,
+                    "fromTime": int(time.time()) - 3600,  # Convert to milliseconds
+                    "toTime": int(time.time()),  # Convert to milliseconds
+                    "limit": limit * 2  # Fetch more to account for filtered transactions
+                }
+            }
         }
         
         # Make API request
-        response = requests.get(url, params=params)
+        response = requests.post(url, json=payload)
         print(f"API Response Status: {response.status_code}")
-        print(f"API Request Payload: {json.dumps(params, indent=2)}")
+        print(f"API Request Payload: {json.dumps(payload, indent=2)}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
@@ -529,7 +537,7 @@ async def fetch_recent_trades(token_address, limit=10):
             
         data = response.json()
         print(f"API Response Data: {json.dumps(data, indent=2)}")
-        trades_data = data
+        trades_data = data.get('result', [])
         print(f"Total transactions returned: {len(trades_data)}")
         
         trades = []
@@ -924,16 +932,20 @@ def analyze_recent_transactions(token_address, minutes=15):
             return None
             
         # Use Helius Enhanced Transactions API
-        url = f"https://api.helius.xyz/v0/token-transactions?api-key={HELIUS_API_KEY}"
+        url = "https://api.helius.xyz/v0/addresses"
         print(f"Fetching transactions from Helius API: {url}")
         
         payload = {
-            "query": {
-                "accounts": [token_address],
-                "startTime": cutoff_time * 1000,  # Convert to milliseconds
-                "endTime": current_time * 1000,  # Convert to milliseconds
-                "types": ["SWAP", "TRANSFER", "BURN", "MINT"],
-                "limit": 100
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "searchAssetTransfers",
+            "params": {
+                "query": {
+                    "ownerAddress": token_address,
+                    "fromTime": cutoff_time * 1000,  # Convert to milliseconds
+                    "toTime": current_time * 1000,  # Convert to milliseconds
+                    "limit": 100
+                }
             }
         }
         
@@ -947,7 +959,7 @@ def analyze_recent_transactions(token_address, minutes=15):
             
         data = response.json()
         print(f"API Response Data: {json.dumps(data, indent=2)}")
-        transactions = data.get('items', [])
+        transactions = data.get('result', [])
         print(f"Total transactions returned: {len(transactions)}")
         
         if not transactions:
