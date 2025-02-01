@@ -7,7 +7,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    JobQueue
+    JobQueue,
+    CallbackContext
 )
 
 # Load environment variables
@@ -320,32 +321,40 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Bot Main Function ###
 def main():
     """Run the Telegram bot."""
-    # Only run the bot if we're in development environment (local) or production environment (Heroku)
-    if ENVIRONMENT == "production" and not os.getenv("DYNO"):  # DYNO is set by Heroku
-        print("Production environment detected but not running on Heroku. Stopping bot to prevent conflicts.")
-        return
-    elif ENVIRONMENT == "development" and os.getenv("DYNO"):
-        print("Development environment detected but running on Heroku. Stopping bot to prevent conflicts.")
-        return
+    try:
+        app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+        job_queue = app.job_queue
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    job_queue = app.job_queue
+        # Set up command handlers
+        app.add_handler(CommandHandler("start", start_command))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("price", price_command))
+        app.add_handler(CommandHandler("alert", alert_command))
+        app.add_handler(CommandHandler("change", change_command))
+        app.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
+        app.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
+        app.add_handler(CommandHandler("ping", ping_command))
 
-    # Set up command handlers
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("alert", alert_command))
-    app.add_handler(CommandHandler("change", change_command))
-    app.add_handler(CommandHandler("subscribe", subscribe_alerts_command))
-    app.add_handler(CommandHandler("unsubscribe", unsubscribe_alerts_command))
-    app.add_handler(CommandHandler("ping", ping_command))
+        # Add error handler
+        app.add_error_handler(error_handler)
 
-    job_queue.run_repeating(check_alerts, interval=120, first=10)  # Auto-alert every 2 min
+        job_queue.run_repeating(check_alerts, interval=120, first=10)  # Auto-alert every 2 min
 
-    print(f"Starting bot in {ENVIRONMENT} environment...")
-    app.run_polling()
+        print(f"Starting bot in {ENVIRONMENT} environment...")
+        app.run_polling(drop_pending_updates=True)  # Add drop_pending_updates=True
+    except Exception as e:
+        print(f"Error starting bot: {str(e)}")
+        if "Conflict" in str(e):
+            print("Another instance of the bot is already running. This instance will not start.")
+        raise
 
+def error_handler(update: Update, context: CallbackContext) -> None:
+    """Handle errors in the telegram bot."""
+    print(f"Update {update} caused error {context.error}")
+    if isinstance(context.error, Conflict):
+        print("Conflict error: Another instance of the bot is already running")
+    elif isinstance(context.error, TimedOut):
+        print("Request timed out. Will retry automatically.")
 
 if __name__ == "__main__":
     main()
