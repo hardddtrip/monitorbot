@@ -624,11 +624,13 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 def main():
     """Run the Telegram bot."""
     try:
-        # Create application and pass it your bot's token
+        print("Starting bot in production environment...")
+        
+        # Create application with proper timeouts and settings
         application = (
             ApplicationBuilder()
             .token(TELEGRAM_BOT_TOKEN)
-            .connect_timeout(30)  # Longer timeout for slow connections
+            .connect_timeout(30)
             .read_timeout(30)
             .write_timeout(30)
             .pool_timeout(30)
@@ -636,6 +638,7 @@ def main():
             .get_updates_read_timeout(30)
             .get_updates_write_timeout(30)
             .get_updates_pool_timeout(30)
+            .concurrent_updates(True)  # Allow concurrent updates
             .build()
         )
 
@@ -649,33 +652,42 @@ def main():
         # Add error handler
         application.add_error_handler(error_handler)
 
-        # Start the bot
-        print("Starting bot in production environment...")
+        # Start the bot with proper settings
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,  # Important: Drop pending updates to avoid conflicts
+            drop_pending_updates=True,  # Important: Drop pending updates
+            stop_signals=None,  # Don't stop on signals
             close_loop=False  # Don't close the event loop
         )
 
+    except telegram.error.Conflict as e:
+        print(f"Conflict error: {e}")
+        print("Another instance is running. Waiting for it to terminate...")
+        time.sleep(30)  # Wait longer to ensure other instance is gone
+        sys.exit(1)
     except Exception as e:
         print(f"Error starting bot: {e}")
-        time.sleep(10)  # Wait before exiting to avoid rapid restarts
+        time.sleep(10)  # Wait before exiting
         sys.exit(1)
 
 def error_handler(update: Update, context: CallbackContext) -> None:
     """Handle errors in the telegram bot."""
-    print(f"Update {update} caused error {context.error}")
     try:
         if isinstance(context.error, telegram.error.Conflict):
-            print("Conflict error: Another instance of the bot is already running")
-        elif isinstance(context.error, telegram.error.TimedOut):
+            print("Conflict error: Another instance is running")
+            return  # Just return and let the main error handler deal with it
+            
+        if isinstance(context.error, telegram.error.TimedOut):
             print("Request timed out. Will retry automatically.")
-        elif isinstance(context.error, (ValueError, TypeError)):
-            print(f"Value/Type error: {str(context.error)}")
+            return  # Return and let the framework retry
+            
+        if update:
+            print(f"Update {update.update_id} caused error: {context.error}")
         else:
-            print(f"Unexpected error: {str(context.error)}")
+            print(f"Error without update: {context.error}")
+            
     except Exception as e:
-        print(f"Error in error handler: {str(e)}")
+        print(f"Error in error handler: {e}")
 
 if __name__ == "__main__":
     main()
