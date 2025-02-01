@@ -923,9 +923,11 @@ async def analyze_recent_transactions(token_address, minutes=15):
             'bot_trades': 0
         }
         
-        # Track wallet interactions
-        wallet_interactions = {}
-        wallet_tx_counts = {}
+        # Track wallet interactions and timing
+        wallet_interactions = {}  # wallet -> list of transactions
+        wallet_tx_counts = {}     # wallet -> count of transactions
+        wallet_last_swap = {}     # wallet -> timestamp of last swap
+        large_swaps = []          # list of large swaps for sandwich detection
         
         # Process transactions
         recent_transactions = []
@@ -940,15 +942,6 @@ async def analyze_recent_transactions(token_address, minutes=15):
             # Track active wallets
             active_wallets.add(source)
             
-            # Update pattern counters
-            if tx_type == 'SWAP':
-                patterns['swaps'] += 1
-            elif 'transfer' in description.lower():
-                patterns['transfers'] += 1
-                
-            if not success:
-                patterns['failed'] += 1
-                
             # Extract amount from token transfers
             amount = 0
             token_transfers = tx.get('tokenTransfers', [])
@@ -956,6 +949,74 @@ async def analyze_recent_transactions(token_address, minutes=15):
                 if transfer.get('mint') == token_address:
                     amount = float(transfer.get('tokenAmount', 0))
                     break
+            
+            # Update pattern counters
+            if tx_type == 'SWAP':
+                patterns['swaps'] += 1
+                
+                # Check for rapid swaps and bot trading
+                if source in wallet_last_swap:
+                    time_since_last = timestamp - wallet_last_swap[source]
+                    if time_since_last < 60:  # Within 1 minute
+                        patterns['rapid_swaps'] += 1
+                        if time_since_last < 3:  # Within 3 seconds
+                            patterns['bot_trades'] += 1
+                wallet_last_swap[source] = timestamp
+                
+                # Track large swaps for sandwich attack detection
+                if amount > 1000:  # Adjust threshold as needed
+                    large_swaps.append({
+                        'timestamp': timestamp,
+                        'amount': amount,
+                        'source': source
+                    })
+            elif 'transfer' in description.lower():
+                patterns['transfers'] += 1
+            
+            if not success:
+                patterns['failed'] += 1
+            
+            # Track wallet activity
+            if source not in wallet_interactions:
+                wallet_interactions[source] = []
+            wallet_interactions[source].append({
+                'timestamp': timestamp,
+                'amount': amount,
+                'type': tx_type
+            })
+            wallet_tx_counts[source] = wallet_tx_counts.get(source, 0) + 1
+            
+            # Look for patterns in token transfers
+            if len(token_transfers) > 2:
+                patterns['multi_transfers'] += 1
+                # Check for arbitrage (multiple token swaps in one tx)
+                unique_tokens = len(set(t.get('mint') for t in token_transfers))
+                if unique_tokens > 2:
+                    patterns['arbitrage'] += 1
+            
+            # Check for large transfers
+            if amount > 1000:  # Adjust threshold as needed
+                patterns['large_transfers'] += 1
+            
+            # Check for flash loans (same token, same amount, within same tx)
+            token_in_out = {}
+            for transfer in token_transfers:
+                mint = transfer.get('mint')
+                amt = transfer.get('tokenAmount', 0)
+                if mint in token_in_out and abs(token_in_out[mint] + amt) < 0.01:
+                    patterns['flash_loans'] += 1
+                    break
+                token_in_out[mint] = token_in_out.get(mint, 0) - amt
+            
+            # Check for high slippage
+            if 'slippage' in description.lower() or (
+                tx_type == 'SWAP' and 
+                'tokenTransfers' in tx and 
+                len(token_transfers) >= 2 and
+                abs(token_transfers[0].get('tokenAmount', 0) - token_transfers[-1].get('tokenAmount', 0)) / 
+                token_transfers[0].get('tokenAmount', 1) > 0.05  # 5% slippage
+            ):
+                patterns['high_slippage'] += 1
             
             recent_transactions.append({
                 'type': tx_type.lower(),
@@ -965,18 +1026,22 @@ async def analyze_recent_transactions(token_address, minutes=15):
                 'source': source,
                 'success': success
             })
-            
-            # Update wallet stats
-            wallet_tx_counts[source] = wallet_tx_counts.get(source, 0) + 1
-            
-            # Look for patterns in token transfers
-            if len(token_transfers) > 2:
-                patterns['multi_transfers'] += 1
-                
-            # Check for large transfers
-            if amount > 1000:  # Adjust threshold as needed
-                patterns['large_transfers'] += 1
-                
+        
+        # Detect sandwich attacks (large trade followed by another large trade within short time)
+        if len(large_swaps) >= 2:
+            for i in range(len(large_swaps) - 1):
+                if large_swaps[i+1]['timestamp'] - large_swaps[i]['timestamp'] < 60:  # Within 1 minute
+                    patterns['sandwich_attacks'] += 1
+        
+        # Detect wash trading (same wallet trading frequently with itself or related wallets)
+        for wallet, txs in wallet_interactions.items():
+            if len(txs) >= 3:  # At least 3 transactions
+                # Check time window (e.g., 5 minutes)
+                window_start = txs[0]['timestamp']
+                window_end = txs[-1]['timestamp']
+                if window_end - window_start < 300:  # Within 5 minutes
+                    patterns['wash_trades'] += 1
+        
         # Calculate trading velocity (transactions per minute)
         if transaction_count > 0:
             time_range = (transactions[0].get('timestamp', 0) - transactions[-1].get('timestamp', 0)) / 60
@@ -984,7 +1049,7 @@ async def analyze_recent_transactions(token_address, minutes=15):
         else:
             trading_velocity = 0
             
-        # Get top suspicious wallets
+        # Get top suspicious wallets (most active)
         suspicious_wallets = dict(sorted(wallet_tx_counts.items(), key=lambda x: x[1], reverse=True)[:5])
         
         return {
