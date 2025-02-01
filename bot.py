@@ -233,6 +233,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command to greet users."""
     await update.message.reply_text("Hello! I will notify you about token activity.")
 
+##Ping##
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Pong!")
+
 ### 🔹 Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
