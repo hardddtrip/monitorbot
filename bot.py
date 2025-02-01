@@ -14,7 +14,7 @@ from telegram.ext import (
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # ✅ Helius API Key
 DEFAULT_TOKEN_ADDRESS = "h5NciPdMZ5QCB5BYETJMYBMpVx9ZuitR6HcVjyBhood"
-DEFAULT_WALLET = "your_default_solana_wallet_address"  # ✅ Replace with actual wallet
+DEFAULT_WALLET = "DzfNo1qoGx4rYXbwS273tmPaxZMibr8iSrdw4Mvnhtv4"  # ✅ Replace with actual wallet
 
 # ✅ Ensure tokens exist
 if not TELEGRAM_BOT_TOKEN:
@@ -35,13 +35,15 @@ def escape_md(text):
 
 ### 🔹 Fetch Recent Solana Transactions (Helius API) ###
 def fetch_solana_transactions(wallet_address, limit=5):
-    """Fetch recent Solana transactions for a given wallet."""
     url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     payload = {
         "jsonrpc": "2.0",
-        "id": 1,
+        "id": "1",
         "method": "getSignaturesForAddress",
-        "params": [wallet_address, {"limit": limit}]
+        "params": [
+            wallet_address,
+            {"limit": limit}
+        ]
     }
     headers = {"Content-Type": "application/json"}
 
@@ -52,6 +54,12 @@ def fetch_solana_transactions(wallet_address, limit=5):
     else:
         print(f"⚠️ Helius API Error: {response.status_code} - {response.text}")
         return None
+
+# Example usage:
+transactions = fetch_solana_transactions(WALLET_ADDRESS)
+if transactions:
+    for tx in transactions:
+        print(f"Signature: {tx['signature']}, Slot: {tx['slot']}")
 
 
 ### 🔹 Fetch Solana Analytics (Helius API) ###
