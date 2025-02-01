@@ -379,7 +379,7 @@ def fetch_recent_trades(token_address, limit=10):
         "params": [
             token_address,
             {
-                "limit": limit,
+                "limit": limit * 2,  # Fetch more to filter for actual trades
                 "commitment": "confirmed"
             }
         ]
@@ -389,19 +389,68 @@ def fetch_recent_trades(token_address, limit=10):
         response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
         if response.status_code == 200:
             signatures = response.json().get("result", [])
+            if not signatures:
+                return None
             
             # Fetch transaction details for each signature
             trades = []
             for sig in signatures:
                 trade = fetch_transaction_details(sig["signature"])
-                if trade:
-                    trades.append(trade)
+                if trade and is_trade_transaction(trade):
+                    trades.append({
+                        "signature": sig["signature"],
+                        "timestamp": trade["blockTime"],
+                        "amount": extract_trade_amount(trade),
+                        "type": determine_trade_type(trade)
+                    })
+                    if len(trades) >= limit:
+                        break
             return trades
         print(f"Helius API Error: {response.status_code} - {response.text}")
         return None
     except Exception as e:
         print(f"Error fetching recent trades: {str(e)}")
         return None
+
+def is_trade_transaction(tx):
+    """Check if transaction is a trade."""
+    if not tx or "meta" not in tx:
+        return False
+    
+    # Check program IDs for common DEX programs
+    for account in tx.get("transaction", {}).get("message", {}).get("accountKeys", []):
+        if account.get("pubkey") in [
+            "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium
+            "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",  # Jupiter
+            "DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1",  # Orca
+        ]:
+            return True
+    return False
+
+def determine_trade_type(tx):
+    """Determine if trade is a buy or sell."""
+    if not tx or "meta" not in tx:
+        return "Unknown"
+    
+    logs = tx["meta"].get("logMessages", [])
+    for log in logs:
+        if "swap" in log.lower():
+            if "in" in log.lower():
+                return "Buy"
+            elif "out" in log.lower():
+                return "Sell"
+    return "Swap"
+
+def extract_trade_amount(tx):
+    """Extract trade amount from transaction."""
+    if not tx or "meta" not in tx:
+        return 0
+    
+    # Look for token balance changes
+    for balance_change in tx["meta"].get("postTokenBalances", []):
+        if balance_change.get("mint") == DEFAULT_TOKEN_ADDRESS:
+            return float(balance_change.get("uiTokenAmount", {}).get("uiAmount", 0))
+    return 0
 
 def fetch_transaction_details(signature):
     """Fetch detailed transaction information using Helius API."""
@@ -440,16 +489,13 @@ def fetch_liquidity_changes(token_address):
     
     if trades:
         for trade in trades:
-            # Analyze transaction for liquidity events
-            if "meta" in trade and "logMessages" in trade["meta"]:
-                messages = trade["meta"]["logMessages"]
-                for msg in messages:
-                    if "liquidity" in msg.lower():
-                        liquidity_events.append({
-                            "signature": trade["transaction"]["signatures"][0],
-                            "timestamp": trade["blockTime"],
-                            "message": msg
-                        })
+            if trade["type"] in ["Add Liquidity", "Remove Liquidity"]:
+                liquidity_events.append({
+                    "signature": trade["signature"],
+                    "timestamp": trade["timestamp"],
+                    "type": trade["type"],
+                    "amount": trade["amount"]
+                })
     
     return {
         "current_liquidity": current_liquidity,
@@ -486,10 +532,15 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(escape_md("⚠️ Could not fetch trade data."), parse_mode="MarkdownV2")
         return
     
-    message = "*🔄 Recent Large Trades*\n\n"
+    message = "*🔄 Recent Trades*\n\n"
     for trade in trades[:5]:
-        sig = trade["transaction"]["signatures"][0]
-        timestamp = datetime.fromtimestamp(trade["blockTime"]).strftime("%Y-%m-%d %H:%M:%S")
+        sig = trade["signature"]
+        timestamp = datetime.fromtimestamp(trade["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        amount = trade["amount"]
+        trade_type = trade["type"]
+        
+        emoji = "🟢" if trade_type == "Buy" else "🔴" if trade_type == "Sell" else "⚪️"
+        message += f"{emoji} *{trade_type}*: {amount:,.0f} tokens\n"
         message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
         message += f"📅 {timestamp}\n\n"
     
@@ -507,13 +558,18 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message = "*💧 Liquidity Analysis*\n\n"
     message += f"Current Liquidity: ${liquidity_data['current_liquidity']:,.2f}\n\n"
-    message += "*Recent Events:*\n"
     
-    for event in liquidity_data["recent_events"]:
-        timestamp = datetime.fromtimestamp(event["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-        sig = event["signature"]
-        message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
-        message += f"📅 {timestamp}\n\n"
+    if liquidity_data["recent_events"]:
+        message += "*Recent Events:*\n"
+        for event in liquidity_data["recent_events"]:
+            timestamp = datetime.fromtimestamp(event["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+            sig = event["signature"]
+            emoji = "➕" if event["type"] == "Add Liquidity" else "➖"
+            message += f"{emoji} {event['type']}: {event['amount']:,.0f} tokens\n"
+            message += f"🔹 [{sig[:8]}...](https://explorer.solana.com/tx/{sig})\n"
+            message += f"📅 {timestamp}\n\n"
+    else:
+        message += "*No recent liquidity events found*"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
