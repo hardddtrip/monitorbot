@@ -237,6 +237,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Pong!")
 
+### --- CHANGE TOKEN ADDRESS --- ###
+
+async def change_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow users to change the token address they want to track."""
+    user_id = update.message.chat_id
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /change <TOKEN_ADDRESS>")
+        return
+
+    token_address = context.args[0]
+    user_addresses[user_id] = token_address
+    await update.message.reply_text(f"✅ Token address updated! Now tracking: `{token_address}`", parse_mode="Markdown")
+
+
 ### 🔹 Help ###
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = escape_md(
@@ -246,6 +261,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ping - Check if the bot is alive\n"
         "/price - Get token price\n"
         "/alert - Check for alerts manually\n"
+        "/change <TOKEN_ADDRESS> - Change token address\n"
         "/subscribe_alerts - Enable auto alerts for 24h\n"
         "/unsubscribe_alerts - Disable auto alerts"
     )
