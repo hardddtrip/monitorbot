@@ -390,7 +390,7 @@ async def fetch_recent_trades(token_address, limit=10):
         # Set up parameters
         params = {
             "api-key": HELIUS_API_KEY,
-            "type": "SWAP",  # Only get swap transactions
+            "type": ["SWAP", "TRANSFER"],  # Include both swaps and transfers
             "limit": limit
         }
         
@@ -402,41 +402,32 @@ async def fetch_recent_trades(token_address, limit=10):
             print(f"Response: {response.text}")
             return None
             
-        trades = response.json()
+        data = response.json()
+        trades = []
         
-        if not trades:
-            print("No trades found")
-            return None
+        for tx in data:
+            trade_info = {
+                "timestamp": tx.get("timestamp", 0),
+                "signature": tx.get("signature", "Unknown"),
+                "description": tx.get("description", "Unknown Trade")
+            }
+            
+            # Add token transfers if available
+            if "tokenTransfers" in tx:
+                for transfer in tx["tokenTransfers"]:
+                    if transfer.get("mint") == token_address:
+                        trade_info["amount"] = float(transfer.get("tokenAmount", 0))
+                        trade_info["from"] = transfer.get("fromUserAccount", "Unknown")
+                        trade_info["to"] = transfer.get("toUserAccount", "Unknown")
+                        break
+            
+            trades.append(trade_info)
             
         print(f"Found {len(trades)} trades")
         return trades
         
     except Exception as e:
         print(f"Error fetching trades: {str(e)}")
-        return None
-
-def fetch_transaction_details(signature):
-    """Enhanced transaction details fetch with enriched data."""
-    try:
-        url = f"{HELIUS_API_URL}/parsed-transaction?api-key={HELIUS_API_KEY}"
-        payload = {"transactions": [signature]}
-        response = requests.post(url, json=payload)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                tx = data[0]
-                return {
-                    "timestamp": tx.get("timestamp"),
-                    "fee": tx.get("fee"),
-                    "status": "success" if tx.get("success") else "failed",
-                    "type": tx.get("type", "unknown"),
-                    "tokenTransfers": tx.get("tokenTransfers", []),
-                    "nativeTransfers": tx.get("nativeTransfers", [])
-                }
-        return None
-    except Exception as e:
-        print(f"Error fetching transaction details: {str(e)}")
         return None
 
 async def fetch_liquidity_changes(token_address):
@@ -451,12 +442,14 @@ async def fetch_liquidity_changes(token_address):
         liquidity_changes = []
         
         for trade in trades:
+            description = trade.get("description", "").lower()
             # Look for liquidity-related transactions
-            if "description" in trade and ("liquidity" in trade["description"].lower() or "pool" in trade["description"].lower()):
+            if any(word in description for word in ["liquidity", "pool", "swap", "raydium"]):
                 liquidity_changes.append({
                     "timestamp": trade.get("timestamp", 0),
                     "description": trade.get("description", "Unknown"),
-                    "signature": trade.get("signature", "Unknown")
+                    "signature": trade.get("signature", "Unknown"),
+                    "amount": trade.get("amount", 0)
                 })
                 
         return liquidity_changes if liquidity_changes else None
