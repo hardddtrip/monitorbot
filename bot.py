@@ -347,14 +347,14 @@ def fetch_token_holders(token_address, limit=20):
         print(f"Error fetching token holders: {str(e)}")
         return None
 
-def fetch_recent_trades(token_address, limit=10):
+async def fetch_recent_trades(token_address, limit=10):
     """Enhanced recent trades fetch with DAS API integration."""
     try:
         url = "https://api.helius.xyz/v0/addresses/" + token_address + "/transactions"
         
         params = {
             "api-key": HELIUS_API_KEY,
-            "before": str(int(time.time())),  # Current time
+            "until": str(int(time.time())),  # Current time
             "limit": str(limit)
         }
         
@@ -382,7 +382,7 @@ def fetch_recent_trades(token_address, limit=10):
                             trades.append(trade_info)
                             break
             
-            return trades[:limit]  # Return only up to the limit
+            return trades[:limit] if trades else None  # Return None if no trades found
         
         print(f"Error response from Helius API: {response.status_code}")
         print(response.text)
@@ -476,7 +476,7 @@ async def trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"\n--- Fetching trades for user {user_id} ---")
     print(f"Token address: {token_address}")
     
-    trades = fetch_recent_trades(token_address)
+    trades = await fetch_recent_trades(token_address)
     if not trades:
         await update.message.reply_text(escape_md("⚠️ Could not fetch trade data. This might be due to API rate limits or the token not being actively traded."), parse_mode="MarkdownV2")
         return
@@ -565,29 +565,60 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ An error occurred while fetching token metadata")
 
 def generate_alert_message(trades):
-    """Generate alert messages based on token metrics."""
+    """Generate alert message from trade data."""
     if not trades:
-        return None
+        return "⚠️ Could not fetch trade data. This might be due to API rate limits or the token not being actively traded."
     
-    # Initialize alert message
-    alert_message = "*🔄 Recent Trading Activity*\n\n"
+    message = "🔔 *Recent EGG Token Activity*\n\n"
     
     for trade in trades:
-        timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
-        amount = trade.get("amount", 0)
+        try:
+            # Extract trade info safely
+            timestamp = datetime.fromtimestamp(trade.get("timestamp", 0))
+            amount = trade.get("amount", 0)
+            from_addr = trade.get("from", "Unknown")[:8]
+            to_addr = trade.get("to", "Unknown")[:8]
+            sig = trade.get("signature", "Unknown")
+            
+            # Format trade info
+            message += f"*Time:* {timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+            message += f"*Amount:* {amount:,.2f} EGG\n"
+            message += f"*From:* `{from_addr}...`\n"
+            message += f"*To:* `{to_addr}...`\n"
+            message += f"*TX:* [View on Explorer](https://solscan.io/tx/{sig})\n\n"
+            
+        except Exception as e:
+            print(f"Error formatting trade: {e}")
+            continue
+    
+    if message == "🔔 *Recent EGG Token Activity*\n\n":
+        return "⚠️ No recent trades found for EGG token."
         
-        alert_message += (
-            f"*Trade at {timestamp.strftime('%Y-%m-%d %H:%M:%S')}*\n"
-            f"💰 Amount: {amount:,.2f} EGG\n"
-            f"📤 From: `{trade.get('from', 'Unknown')}`\n"
-            f"📥 To: `{trade.get('to', 'Unknown')}`\n"
-            f"🔗 [View Transaction](https://solscan.io/tx/{trade.get('signature', '')})\n\n"
+    return message
+
+async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send alert about recent trades."""
+    try:
+        chat_id = update.message.chat_id
+        print(f"\n--- Fetching trades for user {chat_id} ---")
+        print(f"Token address: {DEFAULT_TOKEN_ADDRESS}")
+        
+        # Get recent trades
+        trades = await fetch_recent_trades(DEFAULT_TOKEN_ADDRESS)
+        
+        # Generate and send message
+        message = generate_alert_message(trades)
+        await update.message.reply_text(
+            text=message,
+            parse_mode='Markdown',
+            disable_web_page_preview=True
         )
-    
-    if not trades:
-        alert_message += "No recent trades found in the last hour."
-    
-    return alert_message
+        
+    except Exception as e:
+        print(f"Error in alert command: {str(e)}")
+        await update.message.reply_text(
+            "⚠️ An error occurred while fetching trade data. Please try again later."
+        )
 
 ### Bot Main Function ###
 def main():
