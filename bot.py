@@ -10,6 +10,7 @@ from telegram.ext import (
     JobQueue,
     CallbackContext
 )
+from telegram.error import Conflict, TimedOut
 from datetime import datetime
 
 # Load environment variables
@@ -531,9 +532,13 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += f"Symbol: {metadata.get('symbol', 'Unknown')}\n"
     message += f"Decimals: {metadata.get('decimals', 'Unknown')}\n"
     
-    if "supply" in metadata:
-        supply = float(metadata["supply"])
-        message += f"Total Supply: {supply:,.0f}\n"
+    supply = metadata.get('supply')
+    if supply is not None:
+        try:
+            supply_float = float(supply)
+            message += f"Total Supply: {supply_float:,.0f}\n"
+        except (ValueError, TypeError):
+            message += f"Total Supply: {supply}\n"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
@@ -575,10 +580,17 @@ def main():
 def error_handler(update: Update, context: CallbackContext) -> None:
     """Handle errors in the telegram bot."""
     print(f"Update {update} caused error {context.error}")
-    if isinstance(context.error, Conflict):
-        print("Conflict error: Another instance of the bot is already running")
-    elif isinstance(context.error, TimedOut):
-        print("Request timed out. Will retry automatically.")
+    try:
+        if isinstance(context.error, Conflict):
+            print("Conflict error: Another instance of the bot is already running")
+        elif isinstance(context.error, TimedOut):
+            print("Request timed out. Will retry automatically.")
+        elif isinstance(context.error, (ValueError, TypeError)):
+            print(f"Value/Type error: {str(context.error)}")
+        else:
+            print(f"Unexpected error: {str(context.error)}")
+    except Exception as e:
+        print(f"Error in error handler: {str(e)}")
 
 if __name__ == "__main__":
     main()
