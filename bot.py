@@ -376,36 +376,33 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Enhanced token metadata fetch using paid Helius API features."""
+    """Fetch token metadata using Helius API"""
     try:
-        url = f"{HELIUS_API_URL}/token-metadata?api-key={HELIUS_API_KEY}"
-        payload = {"mintAccounts": [token_address]}
-        response = requests.post(url, json=payload)
+        helius_api_key = os.getenv("HELIUS_API_KEY")
+        if not helius_api_key:
+            logging.warning("HELIUS_API_KEY not found in environment variables")
+            return {}
+            
+        url = f"https://api.helius.xyz/v0/token-metadata?api-key={helius_api_key}"
+        response = requests.post(url, json={"mintAccounts": [token_address]})
+        data = response.json()
         
-        if response.status_code == 200:
-            data = response.json()
-            if data and len(data) > 0:
-                metadata = data[0]
-                if metadata:
-                    account_info = metadata.get("onChainAccountInfo", {}).get("accountInfo", {})
-                    token_info = account_info.get("data", {}).get("parsed", {}).get("info", {})
-                    
-                    return {
-                        "name": "EGG Token",  # Hardcoded name since metadata is not available
-                        "symbol": "EGG",      # Hardcoded symbol
-                        "decimals": token_info.get("decimals", 0),
-                        "supply": token_info.get("supply", "0"),
-                        "image": "",          # No image available
-                        "description": "EGG Token on Solana"  # Hardcoded description
-                    }
-            print(f"No metadata found for token: {token_address}")
-        else:
-            print(f"Error fetching metadata. Status code: {response.status_code}")
-            print(f"Response: {response.text}")
-        return None
+        if not data or not isinstance(data, list) or len(data) == 0:
+            return {}
+            
+        metadata = data[0].get("onChainMetadata", {})
+        return {
+            "name": metadata.get("metadata", {}).get("name"),
+            "symbol": metadata.get("metadata", {}).get("symbol"),
+            "decimals": metadata.get("metadata", {}).get("decimals"),
+            "supply": metadata.get("supply"),
+            "mintAuthority": metadata.get("mintAuthority"),
+            "freezeAuthority": metadata.get("freezeAuthority")
+        }
+        
     except Exception as e:
-        print(f"Error fetching token metadata: {str(e)}")
-        return None
+        logging.error(f"Error fetching token metadata: {str(e)}")
+        return {}
 
 def fetch_token_holders(token_address, limit=20):
     """Enhanced token holders fetch with RPC API."""
@@ -638,132 +635,57 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             token_address = context.args[0]
 
         logging.info(f"Fetching audit data for token: {token_address}")
+        
+        # Fetch both market data and token info
         pair = fetch_token_data(token_address)
+        token_info = fetch_token_info(token_address)
         
         if not pair:
             await update.message.reply_text("❌ Failed to fetch token data")
             return
 
-        # Extract basic metrics
-        price_usd = float(pair["priceUsd"])
-        volume_24h = float(pair["volume"]["h24"])
-        volume_1h = float(pair.get("volume", {}).get("h1", 0))
-        liquidity = float(pair["liquidity"]["usd"])
-        market_cap = float(pair.get("marketCap", 0))
-        fdv = float(pair.get("fdv", 0))
+        # Original metrics calculation...
+        {{ ... }}
         
-        logging.info(f"Basic metrics extracted - Price: ${price_usd}, Volume 24h: ${volume_24h}, Liquidity: ${liquidity}")
-        
-        # Price metrics
-        price_change_1h = float(pair.get("priceChange", {}).get("h1", 0))
-        price_change_24h = float(pair.get("priceChange", {}).get("h24", 0))
-        price_change_7d = float(pair.get("priceChange", {}).get("d7", 0))
-        
-        # Liquidity metrics
-        liquidity_base = float(pair["liquidity"]["base"])
-        liquidity_quote = float(pair["liquidity"]["quote"])
-        liquidity_change_24h = float(pair.get("liquidity", {}).get("h24", 0))
-        
-        # Transaction metrics
-        txns_1h = pair.get("txns", {}).get("h1", {})
-        txns_24h = pair.get("txns", {}).get("h24", {})
-        buys_1h = int(txns_1h.get("buys", 0))
-        sells_1h = int(txns_1h.get("sells", 0))
-        buys_24h = int(txns_24h.get("buys", 0))
-        sells_24h = int(txns_24h.get("sells", 0))
-        
-        logging.info(f"Transaction metrics extracted - Buys 24h: {buys_24h}, Sells 24h: {sells_24h}")
-        
-        # Calculate derived metrics
-        avg_buy_size_1h = volume_1h / buys_1h if buys_1h > 0 else 0
-        avg_sell_size_1h = volume_1h / sells_1h if sells_1h > 0 else 0
-        buy_sell_ratio_24h = buys_24h / sells_24h if sells_24h > 0 else float('inf')
-        liquidity_concentration = abs(liquidity_base - liquidity_quote) / liquidity if liquidity > 0 else 0
-        volume_to_mcap = (volume_24h / market_cap * 100) if market_cap > 0 else 0
-        liquidity_to_mcap = (liquidity / market_cap * 100) if market_cap > 0 else 0
-        
-        # Risk assessment
-        risk_factors = []
-        if liquidity < 50000:
-            risk_factors.append("⚠️ Low liquidity (<$50k)")
-        if liquidity_to_mcap < 5:
-            risk_factors.append("⚠️ Low liquidity/mcap ratio (<5%)")
-        if volume_to_mcap < 1:
-            risk_factors.append("⚠️ Low volume/mcap ratio (<1%)")
-        if abs(price_change_24h) > 50:
-            risk_factors.append("⚠️ High price volatility (>50% in 24h)")
-        if liquidity_concentration > 0.3:
-            risk_factors.append("⚠️ High liquidity imbalance")
-        if market_cap > 0 and fdv / market_cap > 5:
-            risk_factors.append("⚠️ High FDV/MCAP ratio (>5x)")
-        
-        # Health score calculation (0-100)
-        health_score = 100
-        health_score -= 0 if liquidity > 100000 else (20 * (1 - liquidity/100000))  # -20 max
-        health_score -= 0 if liquidity_to_mcap > 10 else (15 * (1 - liquidity_to_mcap/10))  # -15 max
-        health_score -= 0 if volume_to_mcap > 5 else (15 * (1 - volume_to_mcap/5))  # -15 max
-        health_score -= 0 if abs(price_change_24h) < 30 else (20 * (abs(price_change_24h)/100))  # -20 max
-        health_score -= 0 if liquidity_concentration < 0.2 else (15 * liquidity_concentration)  # -15 max
-        health_score -= 0 if fdv/market_cap < 3 else (15 * (fdv/market_cap/10))  # -15 max
-        health_score = max(0, min(100, health_score))  # Clamp between 0-100
-        
-        logging.info(f"Health score calculated: {health_score}")
-        
-        # Generate health indicator and overall comment
-        health_indicator = "🟢" if health_score >= 80 else "🟡" if health_score >= 50 else "🔴"
-        overall_comment = (
-            "Excellent token health, low risk profile." if health_score >= 80
-            else "Moderate risk, exercise caution." if health_score >= 50
-            else "High risk, trade with extreme caution."
-        )
-        
-        # Format audit message
-        audit_message = (
-            "🔍 *Token Audit Report* 🔍\n\n"
-            f"*Health Score:* {health_indicator} {health_score:.0f}/100\n"
-            f"💭 {overall_comment}\n\n"
+        # Add token info section
+        token_info_section = "*Token Information*\n"
+        if token_info:
+            token_info_section += (
+                f"• Name: {token_info['name']}\n"
+                f"• Symbol: {token_info['symbol']}\n"
+                f"• Supply: {float(token_info['supply'])/(10**token_info['decimals']):,.0f}\n"
+                f"• Mintable: {'Yes ⚠️' if token_info['is_mintable'] else 'No ✅'}\n"
+                f"• Freezable: {'Yes ⚠️' if token_info['is_freezable'] else 'No ✅'}\n"
+            )
             
-            "*Price Metrics*\n"
-            f"• Current Price: ${price_usd:.6f}\n"
-            f"• 1h Change: {price_change_1h:+.1f}%\n"
-            f"• 24h Change: {price_change_24h:+.1f}%\n"
-            f"• 7d Change: {price_change_7d:+.1f}%\n"
-            f"*Price Comment:* Stable price action." if abs(price_change_24h) < 20
-            else f"*Price Comment:* Moderate volatility." if abs(price_change_24h) < 50
-            else f"*Price Comment:* Extreme volatility ({price_change_24h:+.1f}% 24h).\n\n"
+            # Add social links and presence
+            social_section = "\n*Social Presence*\n"
+            if token_info['website']:
+                social_section += f"• Website: [Link]({token_info['website']})\n"
+            if token_info['twitter']:
+                social_section += f"• Twitter: [Link]({token_info['twitter']})"
+                if token_info['twitter_followers']:
+                    social_section += f" ({token_info['twitter_followers']:,} followers)"
+                social_section += "\n"
+            if token_info['tiktok']:
+                social_section += f"• TikTok: [Link]({token_info['tiktok']})\n"
             
-            "*Market Metrics*\n"
-            f"• Market Cap: ${market_cap:,.0f}\n"
-            f"• FDV: ${fdv:,.0f}\n"
-            f"• 24h Volume: ${volume_24h:,.0f}\n"
-            f"• Volume/MCap: {volume_to_mcap:.1f}%\n"
-            f"*Market Comment:* Healthy market metrics." if volume_to_mcap >= 5 and volume_to_mcap <= 30
-            else f"*Market Comment:* Low trading activity." if volume_to_mcap < 5
-            else f"*Market Comment:* Unusually high trading volume.\n\n"
-            
-            "*Liquidity Metrics*\n"
-            f"• Total Liquidity: ${liquidity:,.0f}\n"
-            f"• Liquidity/MCap: {liquidity_to_mcap:.1f}%\n"
-            f"• 24h Change: ${liquidity_change_24h:+,.0f}\n"
-            f"• Concentration: {liquidity_concentration:.2f}\n"
-            f"*Liquidity Comment:* Strong liquidity position." if liquidity > 500000 and liquidity_to_mcap >= 10
-            else f"*Liquidity Comment:* Adequate liquidity." if liquidity > 100000 and liquidity_to_mcap >= 5
-            else f"*Liquidity Comment:* Limited liquidity, high risk.\n\n"
-            
-            "*Trading Activity (24h)*\n"
-            f"• Buy Transactions: {buys_24h}\n"
-            f"• Sell Transactions: {sells_24h}\n"
-            f"• Buy/Sell Ratio: {buy_sell_ratio_24h:.2f}\n"
-            f"• Avg Buy (1h): ${avg_buy_size_1h:,.0f}\n"
-            f"• Avg Sell (1h): ${avg_sell_size_1h:,.0f}\n"
-            f"*Trading Comment:* Balanced trading activity." if 0.8 <= buy_sell_ratio_24h <= 1.2
-            else f"*Trading Comment:* Buy pressure dominates." if buy_sell_ratio_24h > 1.2
-            else f"*Trading Comment:* Sell pressure dominates."
-        )
+            # Add description if available
+            if token_info['description']:
+                social_section += f"\n*Description*\n{token_info['description']}\n"
+        else:
+            token_info_section += "❌ Token information unavailable\n"
         
-        # Add risk factors if any
+        # Insert token info section before risk factors
+        audit_message = audit_message.rsplit("*Risk Factors*", 1)[0] if "*Risk Factors*" in audit_message else audit_message
+        audit_message += "\n" + token_info_section + social_section
+        
         if risk_factors:
-            audit_message += "\n\n*Risk Factors*\n" + "\n".join(risk_factors)
+            audit_message += "\n*Risk Factors*\n" + "\n".join(risk_factors)
+        
+        # Add LP burn warning if not verified
+        if token_info and token_info['lp_burned'] is None:
+            audit_message += "\n⚠️ LP burn status could not be verified"
         
         # Use the escape_md function to properly escape all special characters
         audit_message = escape_md(audit_message)
@@ -774,6 +696,57 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error in audit command: {str(e)}", exc_info=True)
         await update.message.reply_text(f"❌ Error analyzing token data: {str(e)}")
+
+def fetch_token_info(token_address):
+    """Fetch comprehensive token information from multiple sources"""
+    try:
+        # Fetch token metadata from Helius
+        metadata = fetch_token_metadata(token_address)
+        
+        # Fetch social info and additional data from DexScreener
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+        response = requests.get(url)
+        data = response.json()
+        
+        if not data or "pairs" not in data or not data["pairs"]:
+            return None
+            
+        # Get the pair with the highest liquidity
+        pairs = data["pairs"]
+        pairs.sort(key=lambda x: float(x.get("liquidity", {}).get("usd", 0)), reverse=True)
+        pair = pairs[0]
+        
+        # Extract social links and info
+        info = pair.get("info", {})
+        socials = {social["type"]: social["url"] for social in info.get("socials", [])}
+        websites = [site["url"] for site in info.get("websites", [])]
+        
+        # Fetch Twitter follower count if available
+        twitter_followers = None
+        if "twitter" in socials:
+            twitter_url = socials["twitter"]
+            twitter_handle = twitter_url.split("/")[-1]
+            # Note: You'll need to implement Twitter API integration to get follower count
+        
+        return {
+            "name": metadata.get("name"),
+            "symbol": metadata.get("symbol"),
+            "decimals": metadata.get("decimals"),
+            "supply": metadata.get("supply"),
+            "description": info.get("description"),
+            "website": websites[0] if websites else None,
+            "twitter": socials.get("twitter"),
+            "twitter_followers": twitter_followers,
+            "tiktok": next((site["url"] for site in info.get("websites", []) if "tiktok" in site["url"]), None),
+            "image": info.get("imageUrl"),
+            "is_mintable": metadata.get("mintAuthority") is not None,
+            "is_freezable": metadata.get("freezeAuthority") is not None,
+            "lp_burned": None  # Would need additional on-chain analysis
+        }
+        
+    except Exception as e:
+        logging.error(f"Error fetching token info: {str(e)}")
+        return None
 
 ### Bot Main Function ###
 def main():
