@@ -276,14 +276,23 @@ def fetch_token_metadata(token_address):
             data = response.json()
             if data and len(data) > 0:
                 metadata = data[0]
-                return {
-                    "name": metadata.get("onChainMetadata", {}).get("metadata", {}).get("data", {}).get("name", "Unknown"),
-                    "symbol": metadata.get("onChainMetadata", {}).get("metadata", {}).get("data", {}).get("symbol", "Unknown"),
-                    "decimals": metadata.get("onChainAccountInfo", {}).get("accountInfo", {}).get("data", {}).get("parsed", {}).get("info", {}).get("decimals", 0),
-                    "supply": metadata.get("onChainAccountInfo", {}).get("accountInfo", {}).get("data", {}).get("parsed", {}).get("info", {}).get("supply", "0"),
-                    "image": metadata.get("offChainMetadata", {}).get("image", ""),
-                    "description": metadata.get("offChainMetadata", {}).get("description", "")
-                }
+                if metadata:
+                    on_chain = metadata.get("onChainMetadata", {}).get("metadata", {}).get("data", {})
+                    account_info = metadata.get("onChainAccountInfo", {}).get("accountInfo", {}).get("data", {}).get("parsed", {}).get("info", {})
+                    off_chain = metadata.get("offChainMetadata", {})
+                    
+                    return {
+                        "name": on_chain.get("name", "Unknown"),
+                        "symbol": on_chain.get("symbol", "Unknown"),
+                        "decimals": account_info.get("decimals", 0),
+                        "supply": account_info.get("supply", "0"),
+                        "image": off_chain.get("image", ""),
+                        "description": off_chain.get("description", "")
+                    }
+            print(f"No metadata found for token: {token_address}")
+        else:
+            print(f"Error fetching metadata. Status code: {response.status_code}")
+            print(f"Response: {response.text}")
         return None
     except Exception as e:
         print(f"Error fetching token metadata: {str(e)}")
@@ -487,59 +496,38 @@ async def liquidity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show token metadata."""
-    user_id = update.message.chat_id
-    token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
-    
-    print(f"\n--- Fetching metadata for user {user_id} ---")
-    print(f"Token address: {token_address}")
-    
-    metadata = fetch_token_metadata(token_address)
-    if not metadata:
-        await update.message.reply_text(
-            escape_md("⚠️ Could not fetch token metadata. Please verify the token address is correct."),
-            parse_mode="MarkdownV2"
-        )
-        return
-    
-    message = "*ℹ️ Token Metadata*\n\n"
-    
-    # Basic token info
-    message += f"Name: {metadata.get('name', 'Unknown')}\n"
-    message += f"Symbol: {metadata.get('symbol', 'Unknown')}\n"
-    message += f"Decimals: {metadata.get('decimals', 'Unknown')}\n"
-    
-    # Supply info
-    supply = metadata.get('supply')
-    if supply is not None:
-        try:
-            supply_float = float(supply)
-            message += f"Total Supply: {supply_float:,.0f}\n"
-        except (ValueError, TypeError):
-            message += f"Total Supply: {supply}\n"
-    
-    # Price info (if available)
-    price = metadata.get('price')
-    if price is not None:
-        try:
-            price_float = float(price)
-            message += f"Price: ${price_float:.6f}\n"
-        except (ValueError, TypeError):
-            message += f"Price: {price}\n"
-    
-    # Volume info (if available)
-    volume = metadata.get('volume24h')
-    if volume is not None:
-        try:
-            volume_float = float(volume)
-            message += f"24h Volume: ${volume_float:,.2f}\n"
-        except (ValueError, TypeError):
-            message += f"24h Volume: {volume}\n"
-    
-    # Data source
-    source = "Helius"
-    message += f"\nData Source: {source}"
-    
-    await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+    try:
+        user_id = update.message.chat_id
+        token_address = context.application.user_data.get(user_id, {}).get('token_address', DEFAULT_TOKEN_ADDRESS)
+        
+        print(f"\n--- Fetching metadata for user {user_id} ---")
+        print(f"Token address: {token_address}")
+        
+        metadata = fetch_token_metadata(token_address)
+        if not metadata:
+            await update.message.reply_text("❌ Could not fetch token metadata. Please verify the token address is correct.")
+            return
+        
+        message = "*📊 Token Metadata*\n\n"
+        message += f"Name: {metadata.get('name', 'Unknown')}\n"
+        message += f"Symbol: {metadata.get('symbol', 'Unknown')}\n"
+        message += f"Decimals: {metadata.get('decimals', 0)}\n"
+        
+        # Format supply with proper decimals
+        supply = float(metadata.get('supply', '0')) / (10 ** metadata.get('decimals', 0))
+        message += f"Total Supply: {supply:,.2f}\n"
+        
+        if metadata.get('description'):
+            message += f"\nDescription: {metadata['description']}\n"
+        
+        if metadata.get('image'):
+            message += f"\n[View Token Image]({metadata['image']})"
+        
+        await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
+        
+    except Exception as e:
+        print(f"Error in metadata command: {str(e)}")
+        await update.message.reply_text("❌ An error occurred while fetching token metadata")
 
 ### Bot Main Function ###
 def main():
