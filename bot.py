@@ -18,6 +18,8 @@ import base58
 import asyncio
 import statistics
 from transaction_analyzer import TransactionAnalyzer
+import traceback
+from telegram.constants import ParseMode
 
 # Configure logging
 logging.basicConfig(
@@ -1005,7 +1007,7 @@ def main():
         time.sleep(10)  
         sys.exit(1)
 
-def error_handler(update: Update | None, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def error_handler(update: Update | None, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the developer."""
     # Log the error before we do anything else, so we can see it even if something breaks.
     logger.error("Exception while handling an update:", exc_info=context.error)
