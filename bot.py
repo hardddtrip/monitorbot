@@ -709,38 +709,56 @@ async def audit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         logging.info(f"Health score calculated: {health_score}")
         
-        # Generate health indicator
+        # Generate health indicator and overall comment
         health_indicator = "🟢" if health_score >= 80 else "🟡" if health_score >= 50 else "🔴"
+        overall_comment = (
+            "Excellent token health, low risk profile." if health_score >= 80
+            else "Moderate risk, exercise caution." if health_score >= 50
+            else "High risk, trade with extreme caution."
+        )
         
         # Format audit message
         audit_message = (
             "🔍 *Token Audit Report* 🔍\n\n"
-            f"*Health Score:* {health_indicator} {health_score:.0f}/100\n\n"
+            f"*Health Score:* {health_indicator} {health_score:.0f}/100\n"
+            f"💭 {overall_comment}\n\n"
             
             "*Price Metrics*\n"
             f"• Current Price: ${price_usd:.6f}\n"
             f"• 1h Change: {price_change_1h:+.1f}%\n"
             f"• 24h Change: {price_change_24h:+.1f}%\n"
-            f"• 7d Change: {price_change_7d:+.1f}%\n\n"
+            f"• 7d Change: {price_change_7d:+.1f}%\n"
+            f"*Price Comment:* Stable price action." if abs(price_change_24h) < 20
+            else f"*Price Comment:* Moderate volatility." if abs(price_change_24h) < 50
+            else f"*Price Comment:* Extreme volatility ({price_change_24h:+.1f}% 24h).\n\n"
             
             "*Market Metrics*\n"
             f"• Market Cap: ${market_cap:,.0f}\n"
             f"• FDV: ${fdv:,.0f}\n"
             f"• 24h Volume: ${volume_24h:,.0f}\n"
-            f"• Volume/MCap: {volume_to_mcap:.1f}%\n\n"
+            f"• Volume/MCap: {volume_to_mcap:.1f}%\n"
+            f"*Market Comment:* Healthy market metrics." if volume_to_mcap >= 5 and volume_to_mcap <= 30
+            else f"*Market Comment:* Low trading activity." if volume_to_mcap < 5
+            else f"*Market Comment:* Unusually high trading volume.\n\n"
             
             "*Liquidity Metrics*\n"
             f"• Total Liquidity: ${liquidity:,.0f}\n"
             f"• Liquidity/MCap: {liquidity_to_mcap:.1f}%\n"
             f"• 24h Change: ${liquidity_change_24h:+,.0f}\n"
-            f"• Concentration: {liquidity_concentration:.2f}\n\n"
+            f"• Concentration: {liquidity_concentration:.2f}\n"
+            f"*Liquidity Comment:* Strong liquidity position." if liquidity > 500000 and liquidity_to_mcap >= 10
+            else f"*Liquidity Comment:* Adequate liquidity." if liquidity > 100000 and liquidity_to_mcap >= 5
+            else f"*Liquidity Comment:* Limited liquidity, high risk.\n\n"
             
             "*Trading Activity (24h)*\n"
             f"• Buy Transactions: {buys_24h}\n"
             f"• Sell Transactions: {sells_24h}\n"
             f"• Buy/Sell Ratio: {buy_sell_ratio_24h:.2f}\n"
             f"• Avg Buy (1h): ${avg_buy_size_1h:,.0f}\n"
-            f"• Avg Sell (1h): ${avg_sell_size_1h:,.0f}"
+            f"• Avg Sell (1h): ${avg_sell_size_1h:,.0f}\n"
+            f"*Trading Comment:* Balanced trading activity." if 0.8 <= buy_sell_ratio_24h <= 1.2
+            else f"*Trading Comment:* Buy pressure dominates." if buy_sell_ratio_24h > 1.2
+            else f"*Trading Comment:* Sell pressure dominates."
         )
         
         # Add risk factors if any
