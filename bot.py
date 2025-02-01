@@ -325,13 +325,13 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
 ### Helius API Functions ###
 
 def fetch_token_metadata(token_address):
-    """Fetch detailed token metadata using Helius DAS API."""
+    """Fetch detailed token metadata using Helius RPC."""
     url = "https://mainnet.helius-rpc.com/?api-key=" + HELIUS_API_KEY
     
     payload = {
         "jsonrpc": "2.0",
         "id": "my-id",
-        "method": "getAsset",
+        "method": "getTokenMetadata",
         "params": [token_address]
     }
     
@@ -339,6 +339,19 @@ def fetch_token_metadata(token_address):
         response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload)
         if response.status_code == 200:
             result = response.json().get("result", {})
+            if not result:
+                # Try fallback to DexScreener data
+                pair = fetch_token_data(token_address)
+                if pair:
+                    return {
+                        "name": pair.get("baseToken", {}).get("name"),
+                        "symbol": pair.get("baseToken", {}).get("symbol"),
+                        "decimals": pair.get("baseToken", {}).get("decimals"),
+                        "supply": pair.get("baseToken", {}).get("totalSupply"),
+                        "price": pair.get("priceUsd"),
+                        "volume24h": pair.get("volume", {}).get("h24"),
+                        "source": "DexScreener"
+                    }
             return result
         print(f"Helius API Error: {response.status_code} - {response.text}")
         return None
@@ -595,6 +608,25 @@ async def metadata_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"Total Supply: {supply_float:,.0f}\n"
         except (ValueError, TypeError):
             message += f"Total Supply: {supply}\n"
+    
+    price = metadata.get('price')
+    if price is not None:
+        try:
+            price_float = float(price)
+            message += f"Price: ${price_float:.6f}\n"
+        except (ValueError, TypeError):
+            message += f"Price: {price}\n"
+    
+    volume = metadata.get('volume24h')
+    if volume is not None:
+        try:
+            volume_float = float(volume)
+            message += f"24h Volume: ${volume_float:,.2f}\n"
+        except (ValueError, TypeError):
+            message += f"24h Volume: {volume}\n"
+    
+    source = metadata.get('source', 'Helius')
+    message += f"\nData Source: {source}"
     
     await update.message.reply_text(escape_md(message), parse_mode="MarkdownV2")
 
