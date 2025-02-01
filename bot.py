@@ -1104,23 +1104,24 @@ def analyze_recent_transactions(token_address, minutes=15):
 
 async def transactions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show recent transaction analysis."""
-    if not context.user_data.get("token_address"):
-        await update.message.reply_text(
-            "❌ No token set. Use /change to set a token address first."
-        )
-        return
-
-    token_address = context.user_data["token_address"]
-    analysis = analyze_recent_transactions(token_address)
+    user_id = update.message.chat_id
+    token_address = context.user_data.get('token_address', DEFAULT_TOKEN_ADDRESS)
     
+    print(f"\n--- Analyzing transactions for user {user_id} ---")
+    print(f"Token address: {token_address}")
+    
+    # Get analysis timeframe from command arguments
+    minutes = 15  # default timeframe
+    if context.args and context.args[0].isdigit():
+        minutes = int(context.args[0])
+    
+    analysis = analyze_recent_transactions(token_address, minutes)
     if not analysis:
-        await update.message.reply_text(
-            "❌ Failed to analyze transactions. Please try again later."
-        )
+        await update.message.reply_text("❌ Failed to analyze transactions. Please try again later.")
         return
         
     # Format the response
-    message = f"📊 *Transaction Analysis* (Last 15 min)\n\n"
+    message = f"📊 *Transaction Analysis* (Last {minutes} min)\n\n"
     
     message += f"*Overview*:\n"
     message += f"• Total Transactions: {analysis['transaction_count']}\n"
