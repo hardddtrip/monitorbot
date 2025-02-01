@@ -910,6 +910,9 @@ def analyze_recent_transactions(token_address, minutes=15):
         current_time = int(time.time())
         cutoff_time = current_time - (minutes * 60)
         
+        print(f"\nAnalyzing transactions for {token_address}")
+        print(f"Time window: {minutes} minutes (from {cutoff_time} to {current_time})")
+        
         # Fetch transactions using Helius DAS API for better transaction parsing
         HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
         if not HELIUS_API_KEY:
@@ -918,13 +921,18 @@ def analyze_recent_transactions(token_address, minutes=15):
             
         # Use Helius Enhanced Transaction History API
         url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions?api-key={HELIUS_API_KEY}"
+        print(f"Fetching transactions from Helius API: {url}")
+        
         response = requests.get(url)
+        print(f"API Response Status: {response.status_code}")
         
         if response.status_code != 200:
             print(f"Error response: {response.text}")
             return None
             
         transactions = response.json()
+        print(f"Total transactions returned: {len(transactions)}")
+        
         if not transactions:
             print("No transactions found")
             return {
@@ -968,6 +976,11 @@ def analyze_recent_transactions(token_address, minutes=15):
             "failed": 0
         }
         
+        # Sample first transaction for debugging
+        if transactions:
+            print("\nSample transaction structure:")
+            print(json.dumps(transactions[0], indent=2))
+        
         for tx in transactions:
             # Skip old transactions
             timestamp = tx.get("timestamp", 0) / 1000  # Convert to seconds
@@ -978,6 +991,12 @@ def analyze_recent_transactions(token_address, minutes=15):
             source = tx.get('sourceAddress', '')
             instructions = tx.get('instructions', [])
             amount_usd = tx.get('amount', {}).get('usd', 0)
+            
+            print(f"\nAnalyzing transaction:")
+            print(f"Source: {source}")
+            print(f"Instructions: {len(instructions)}")
+            print(f"Amount USD: ${amount_usd}")
+            print(f"Timestamp: {timestamp}")
             
             if source:
                 wallets.add(source)
@@ -996,14 +1015,17 @@ def analyze_recent_transactions(token_address, minutes=15):
             # Analyze transaction type
             if any(prog in str(instructions) for prog in ['Jupiter', 'Raydium', 'Orca']):
                 patterns["swaps"] += 1
+                print("Detected swap transaction")
                 
                 # Check for high slippage
                 if tx.get('slippage', 0) > 5:
                     patterns["high_slippage"] += 1
+                    print("Detected high slippage")
                     
                 # Check for arbitrage (multiple DEX interactions)
                 if len([i for i in instructions if any(dex in str(i) for dex in ['Jupiter', 'Raydium', 'Orca'])]) > 1:
                     patterns["arbitrage"] += 1
+                    print("Detected arbitrage")
                     
                 # Track for sandwich attack detection
                 if amount_usd > 5000:  # Large trades
@@ -1011,18 +1033,22 @@ def analyze_recent_transactions(token_address, minutes=15):
                         "timestamp": timestamp,
                         "amount": amount_usd
                     })
+                    print(f"Detected large trade: ${amount_usd}")
             
             # Check for flash loans
             if "flash_loan" in str(instructions).lower() or (source == tx.get('destinationAddress') and amount_usd > 10000):
                 patterns["flash_loans"] += 1
+                print("Detected flash loan")
             
             # Check for failed transactions
             if not tx.get('successful', True):
                 patterns["failed"] += 1
+                print("Detected failed transaction")
                 
             # Check for wash trading
             if source in wallet_trade_counts and wallet_trade_counts[source] >= 3:
                 patterns["wash_trades"] += 1
+                print("Detected wash trading")
                 
             # Check for sandwich attacks
             if len(large_trades) >= 3:
@@ -1031,10 +1057,17 @@ def analyze_recent_transactions(token_address, minutes=15):
                         large_trades[i+2]["timestamp"] - large_trades[i+1]["timestamp"] < 60):
                         if large_trades[i+1]["amount"] > large_trades[i]["amount"] * 2:
                             patterns["sandwich_attacks"] += 1
+                            print("Detected sandwich attack")
         
         # Calculate trading velocity (tx/min)
         total_trades = len([tx for tx in transactions if tx.get("timestamp", 0)/1000 >= cutoff_time])
         trading_velocity = total_trades / minutes if minutes > 0 else 0
+        
+        print(f"\nAnalysis Results:")
+        print(f"Total trades in window: {total_trades}")
+        print(f"Active wallets: {len(wallets)}")
+        print(f"Trading velocity: {trading_velocity:.2f} tx/min")
+        print(f"Patterns detected: {patterns}")
         
         # Calculate risk metrics
         if total_trades > 0:
