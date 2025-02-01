@@ -310,7 +310,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/holders - View top token holders\n"
         "/trades - View recent trades\n"
         "/liquidity - View liquidity changes\n"
-        "/transactions - Analyze recent transactions\n"
+        "/transactions [minutes] - Analyze transactions (default: 15min)\n"
         "/audit - Full token health analysis\n\n"
         "🔔 *Alerts:*\n"
         "/alert - Get a one-time alert\n"
