@@ -1,5 +1,30 @@
-python-telegram-bot>=20.7
-requests>=2.31.0
+# Core Dependencies
+aiohttp>=3.9.1
+asyncio>=3.4.3
 python-dotenv>=1.0.0
-urllib3>=2.1.0
-base58>=2.1.1
+
+# Data Collection & Analysis
+pandas>=2.1.4
+numpy>=1.26.2
+
+# API Integrations
+google-api-python-client>=2.108.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
+
+# Database
+SQLAlchemy>=2.0.23
+
+# Testing
+pytest>=7.4.3
+pytest-asyncio>=0.23.2
+pytest-cov>=4.1.0
+
+# Development
+black>=23.11.0
+flake8>=6.1.0
+isort>=5.12.0
+mypy>=1.7.1
+
+# Logging
+logging>=0.4.9.6

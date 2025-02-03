@@ -35,3 +35,18 @@ venv/
 
 # Logs
 *.log
+
+# Sensitive Files
+service-account.json
+*.db
+metrics.html
+*.pem
+*.key
+
+# Local Configuration
+config.local.py
+local_settings.py
+
+# Cache
+.cache/
+.pytest_cache/

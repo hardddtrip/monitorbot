@@ -1,6 +1,49 @@
-# MonitorBot - Solana Token Monitoring Bot
+# MonitorBot - Solana Meme Coin Research Hub
 
-A Telegram bot for monitoring Solana tokens, providing real-time alerts, price tracking, and comprehensive token audits.
+A comprehensive monitoring and analysis system for Solana tokens, featuring a Telegram bot for real-time alerts, transaction analysis, and a web-based metrics dashboard. The system is designed to auto-deploy to Heroku and provides deep insights into token activities.
+
+## System Architecture
+
+### Components
+
+1. **Telegram Bot (`bot.py`)**
+   - Real-time token monitoring and alerts
+   - Price tracking and market data analysis
+   - Transaction monitoring and pattern detection
+   - User subscription management
+   - Command interface for token analysis
+
+2. **Transaction Analyzer (`transaction_analyzer.py`)**
+   - Helius API integration for Solana transaction data
+   - Advanced transaction pattern detection
+   - Caching system for optimized performance
+   - Metrics calculation and analysis
+   - Real-time transaction monitoring
+
+3. **Web Dashboard (`metrics.html`)**
+   - Interactive token metrics visualization
+   - Real-time price and volume charts
+   - Transaction activity monitoring
+   - Key metrics display (Market Cap, Volume, Holders)
+   - Responsive design with modern UI
+
+### Data Flow
+
+1. **Data Collection**
+   - Helius API: Real-time transaction data
+   - DexScreener API: Price and market data
+   - On-chain data: Token holder information
+
+2. **Data Processing**
+   - Transaction pattern analysis
+   - Market metrics calculation
+   - Risk assessment
+   - Alert generation
+
+3. **Data Distribution**
+   - Telegram alerts
+   - Web dashboard updates
+   - Subscription-based notifications
 
 ## Features
 
@@ -24,6 +67,7 @@ A Telegram bot for monitoring Solana tokens, providing real-time alerts, price t
 - `/trades` - Monitor recent large trades
 - `/liquidity` - Track liquidity changes
 - `/metadata` - View token metadata
+- `/transactions` - Analyze recent transaction patterns
 
 ### Utility Commands
 - `/start` - Start the bot
@@ -31,53 +75,157 @@ A Telegram bot for monitoring Solana tokens, providing real-time alerts, price t
 - `/ping` - Check bot status
 - `/change` - Change monitored token address
 
+## Token Audit Bot
+
+A Python-based tool for automated token auditing and analysis. The bot performs comprehensive token analysis using Birdeye API data and Claude AI, and posts results to Google Sheets.
+
+### Features
+
+- Real-time token data collection via Birdeye API
+- Multi-timeframe analysis (short-term, mid-term, long-term)
+- Risk assessment and scoring
+- Automated Google Sheets reporting
+- AI-powered market analysis using Claude API
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/monitorbot.git
+cd monitorbot
+```
+
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Copy the example environment file and configure your settings:
+```bash
+cp .env.example .env
+```
+
+### Configuration
+
+1. Set up your environment variables in `.env`:
+   - `CLAUDE_API_KEY`: Your Claude API key
+   - `BIRDEYE_API_KEY`: Your Birdeye API key
+   - `GOOGLE_SHEETS_CREDENTIALS_FILE`: Path to your Google Sheets service account JSON file
+   - `GOOGLE_SHEETS_SPREADSHEET_ID`: ID of your Google Sheets document
+
+2. Set up Google Sheets:
+   - Create a Google Cloud project
+   - Enable the Google Sheets API
+   - Create a service account and download the credentials JSON file
+   - Share your Google Sheet with the service account email
+
+### Usage
+
+1. Run a single token audit:
+```bash
+python audit.py
+```
+
+2. Run the audit scheduler:
+```bash
+python audit_scheduler.py
+```
+
+### Output Format
+
+The audit results are posted to Google Sheets with the following information:
+- Timestamp
+- Token symbol and contract address
+- Market cap
+- Short-term momentum analysis (score, comment, conviction, support/resistance levels)
+- Mid-term momentum analysis
+- Long-term outlook
+- Risk assessment
+- Overall rating
+
 ## Setup
 
-1. Set up environment variables in Heroku:
-   - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token from BotFather
-   - `HELIUS_API_KEY`: Your Helius API key for Solana data
+### Prerequisites
+- Python 3.8+
+- Helius API key
+- Telegram Bot Token
+- Heroku account
 
-2. Deploy to Heroku:
+### Deployment
+
+1. **Environment Variables**
+   ```bash
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+   HELIUS_API_KEY=your_helius_api_key
+   ```
+
+2. **Heroku Deployment**
    ```bash
    git push heroku main
    ```
+   The system will automatically deploy and start monitoring.
 
-## Local Development
+### Local Development
 
-1. Clone the repository:
+1. **Clone Repository**
    ```bash
    git clone https://github.com/hardddtrip/monitorbot.git
    cd monitorbot
    ```
 
-2. Install dependencies:
+2. **Install Dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. Create a `.env` file with required environment variables:
-   ```
-   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-   HELIUS_API_KEY=your_helius_api_key
-   ```
+3. **Configure Environment**
+   Create `.env` file with required variables.
 
-4. Run the bot:
+4. **Run Components**
    ```bash
+   # Start Telegram bot
    python bot.py
+   
+   # Access web dashboard
+   open metrics.html
    ```
 
-## Testing
+## Technical Details
 
-Run the test suite:
-```bash
-python test_audit.py
-```
+### Transaction Analyzer
+- Efficient caching system with TTL
+- Asynchronous transaction processing
+- Pattern detection algorithms
+- Real-time market impact analysis
+
+### Web Dashboard
+- Built with Plot.ly for interactive charts
+- Real-time data updates (30-second intervals)
+- Responsive grid layout
+- Modern UI/UX design
+
+### Bot Features
+- Asynchronous command handling
+- Rate limiting protection
+- Error handling and logging
+- Automatic retry mechanisms
 
 ## Dependencies
-- python-telegram-bot
+- python-telegram-bot>=20.0
+- aiohttp
 - requests
 - python-dotenv
-- See requirements.txt for full list
+- plotly
+- See `requirements.txt` for full list
+
+## Contributing
+Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
 
 ## License
 MIT License
