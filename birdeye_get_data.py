@@ -82,13 +82,23 @@ class BirdeyeDataCollector:
         self.api_key = api_key or os.getenv("BIRDEYE_API_KEY")
         if not self.api_key:
             logger.error("No API key provided and BIRDEYE_API_KEY not set in environment")
+            raise ValueError("API key is required. Set BIRDEYE_API_KEY environment variable or pass api_key parameter.")
+        
+        # Ensure API key is a string
+        self.api_key = str(self.api_key)
+        
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so"
         self.headers = {
-            "X-API-KEY": self.api_key,  # Use the api_key attribute directly
+            "X-API-KEY": self.api_key,
             "accept": "application/json",
             "x-chain": "solana"
         }
+        
+        # Validate headers are properly set
+        if not isinstance(self.headers["X-API-KEY"], str):
+            logger.error(f"API key is not a string: {type(self.headers['X-API-KEY'])}")
+            raise ValueError("API key must be a string")
 
     async def _make_request(self, endpoint: str, params: Dict = None) -> Dict:
         """Make a request to the Birdeye API with retry logic."""
