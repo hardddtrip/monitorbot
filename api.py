@@ -18,16 +18,21 @@ def run_analysis_background(token_address: str, birdeye_api_key: str, spreadshee
             # Initialize services
             sheets = GoogleSheetsIntegration(None, spreadsheet_id)
             birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
-            analyzer = HolderAnalyzer(birdeye, sheets)
+            analyzer = HolderAnalyzer(birdeye_api_key, sheets)  # Pass API key instead of birdeye instance
             auditor = TokenAuditor(birdeye, sheets)
 
-            # Run analysis
+            # Run analysis and wait for both to complete
             await asyncio.gather(
                 analyzer.analyze_holder_data(token_address, ""),
                 auditor.audit_token(token_address)
             )
+            
+            # Log completion
+            print(f"Analysis completed for token {token_address}")
+            
         except Exception as e:
             print(f"Error in background analysis: {str(e)}")
+            raise
 
     # Create a new event loop for the background thread
     loop = asyncio.new_event_loop()

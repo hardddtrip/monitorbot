@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class HolderAnalyzer:
     def __init__(self, birdeye_api_key: str, sheets: GoogleSheetsIntegration):
-        self.birdeye_api_key = birdeye_api_key
+        """Initialize the analyzer with API key and sheets integration."""
         self.sheets = sheets
         self.birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
 
@@ -61,7 +61,7 @@ class HolderAnalyzer:
             "wallet": wallet_address
         }
         headers = {
-            'X-API-KEY': self.birdeye_api_key,
+            'X-API-KEY': self.birdeye.api_key,
             'accept': 'application/json',
             'x-chain': 'solana'
         }
