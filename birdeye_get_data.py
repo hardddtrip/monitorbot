@@ -80,7 +80,7 @@ class BirdeyeDataCollector:
         """Initialize the data collector with API key and Google Sheets integration."""
         self.api_key = api_key
         self.sheets = sheets
-        self.base_url = "https://public-api.birdeye.so/defi"
+        self.base_url = "https://public-api.birdeye.so"
         self.headers = {
             "X-API-KEY": str(api_key),  # Ensure API key is a string
             "accept": "application/json",
@@ -179,13 +179,13 @@ class BirdeyeDataCollector:
         }
         
         logger.info(f"Fetching token metadata from Birdeye for token {token_address}")
-        data = await self._make_request("token_overview", params)
+        data = await self._make_request("defi/token_overview", params)
         return data.get("data", {})
 
     async def get_token_data(self, token_address: str) -> Dict:
         """Get comprehensive token data including price, volume, and liquidity metrics"""
         params = {"address": token_address}
-        data = await self._make_request("token_overview", params)
+        data = await self._make_request("defi/token_overview", params)
         
         if not data or not data.get("success", False):
             logger.error(f"Failed to get token data for {token_address}")
