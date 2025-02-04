@@ -232,9 +232,8 @@ class GoogleSheetsIntegration:
             logger.error(f"Error appending trades to Google Sheet: {str(e)}")
             raise
 
-    def append_audit_results(self, audit_results: List):
+    def append_audit_results(self, audit_results: List, sheet_name: str = "TokenAudits"):
         """Append audit results to the sheet."""
-        sheet_name = "TokenAudits"  # Keep this consistent
         try:
             # Get or create sheet
             sheet_id = self._get_sheet_id(sheet_name)

@@ -341,8 +341,8 @@ class TokenAuditor:
             
             logger.info(f"Formatted row data: {json.dumps(row_data, indent=2)}")
             
-            # Append to sheet
-            self.sheets.append_audit_results(row_data)
+            # Append to sheet with the specified sheet name
+            self.sheets.append_audit_results(row_data, sheet_name=self.audit_sheet_name)
             logger.info("Successfully posted audit results to Google Sheets")
             
         except Exception as e:

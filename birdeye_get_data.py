@@ -566,6 +566,8 @@ class BirdeyeDataCollector:
             - 1Y_high_to_current: % change from 1 year high to current price
         """
         try:
+            logger.info(f"Calculating price changes for token {token_address}")
+            
             # Get weekly OHLCV data for the past year
             weekly_data = await self.get_1y_weekly_ohlcv(token_address)
             
@@ -579,11 +581,16 @@ class BirdeyeDataCollector:
                     "1Y_high_to_current": 0.0
                 }
             
+            # Log the amount of data we have
+            logger.info(f"Retrieved {len(weekly_data)} weeks of OHLCV data")
+            logger.info(f"Date range: {weekly_data[0]['timestamp']} to {weekly_data[-1]['timestamp']}")
+            
             # Sort data by timestamp to ensure correct order
             weekly_data.sort(key=lambda x: x["timestamp"])
             
             # Get current price (latest close)
             current_price = weekly_data[-1]["close"]
+            logger.info(f"Current price (latest close): {current_price}")
             
             # Calculate price changes
             result = {}
@@ -592,28 +599,36 @@ class BirdeyeDataCollector:
             if len(weekly_data) >= 2:
                 prev_week_price = weekly_data[-2]["close"]
                 result["1W"] = ((current_price - prev_week_price) / prev_week_price) * 100
+                logger.info(f"1W: Current={current_price}, Previous={prev_week_price}, Change={result['1W']}%")
             else:
+                logger.warning("Insufficient data for 1W price change calculation")
                 result["1W"] = 0.0
             
             # 1M change - compare current price with price 4 weeks ago
             if len(weekly_data) >= 5:
                 month_ago_price = weekly_data[-5]["close"]
                 result["1M"] = ((current_price - month_ago_price) / month_ago_price) * 100
+                logger.info(f"1M: Current={current_price}, Month ago={month_ago_price}, Change={result['1M']}%")
             else:
+                logger.warning("Insufficient data for 1M price change calculation")
                 result["1M"] = 0.0
 
             # 3M change - compare current price with price 13 weeks ago
             if len(weekly_data) >= 14:
                 three_month_ago_price = weekly_data[-14]["close"]
                 result["3M"] = ((current_price - three_month_ago_price) / three_month_ago_price) * 100
+                logger.info(f"3M: Current={current_price}, Three months ago={three_month_ago_price}, Change={result['3M']}%")
             else:
+                logger.warning("Insufficient data for 3M price change calculation")
                 result["3M"] = 0.0
             
             # 1Y change - compare current price with oldest available price
             if len(weekly_data) >= 2:
                 year_ago_price = weekly_data[0]["close"]
                 result["1Y"] = ((current_price - year_ago_price) / year_ago_price) * 100
+                logger.info(f"1Y: Current={current_price}, Year ago={year_ago_price}, Change={result['1Y']}%")
             else:
+                logger.warning("Insufficient data for 1Y price change calculation")
                 result["1Y"] = 0.0
             
             # Calculate 1Y high and % change from high
@@ -622,9 +637,12 @@ class BirdeyeDataCollector:
                 highs = [week["high"] for week in weekly_data]
                 year_high = max(highs)
                 result["1Y_high_to_current"] = ((current_price - year_high) / year_high) * 100
+                logger.info(f"1Y High: Current={current_price}, Year high={year_high}, Change={result['1Y_high_to_current']}%")
             else:
+                logger.warning("No data available for 1Y high calculation")
                 result["1Y_high_to_current"] = 0.0
             
+            logger.info(f"Final price changes: {result}")
             return result
             
         except Exception as e:
@@ -669,13 +687,36 @@ class BirdeyeDataCollector:
                 "time_to": now
             }
             
+            logger.info(f"Fetching weekly OHLCV data for token {token_address} with params: {params}")
             data = await self._make_request("defi/ohlcv", params)  # Updated to include /defi prefix
-            if data and "data" in data and "items" in data["data"]:
-                items = data["data"]["items"]
+            
+            if not data:
+                logger.error("No data received from API")
+                return []
                 
-                # Format the data
-                weekly_data = []
-                for item in sorted(items, key=lambda x: int(x["unixTime"])):
+            if "error" in data:
+                logger.error(f"API returned error: {data['error']}")
+                return []
+                
+            if "data" not in data:
+                logger.error(f"Unexpected API response format - missing 'data' field: {data}")
+                return []
+                
+            if "items" not in data["data"]:
+                logger.error(f"Unexpected API response format - missing 'items' field: {data['data']}")
+                return []
+                
+            items = data["data"]["items"]
+            if not items:
+                logger.warning(f"No OHLCV items returned for token {token_address}")
+                return []
+                
+            logger.info(f"Received {len(items)} weekly OHLCV items")
+            
+            # Format the data
+            weekly_data = []
+            for item in sorted(items, key=lambda x: int(x["unixTime"])):
+                try:
                     weekly_data.append({
                         "timestamp": datetime.fromtimestamp(int(item["unixTime"])).strftime("%Y-%m-%d"),
                         "open": float(item["o"]),
@@ -684,12 +725,18 @@ class BirdeyeDataCollector:
                         "close": float(item["c"]),
                         "volume": float(item["v"])
                     })
-                
-                return weekly_data
+                except (KeyError, ValueError) as e:
+                    logger.error(f"Error processing OHLCV item {item}: {str(e)}")
+                    continue
             
-            logger.error(f"Error getting weekly OHLCV data: {data}")
-            return []
-                    
+            if not weekly_data:
+                logger.error("Failed to process any OHLCV items")
+            else:
+                logger.info(f"Successfully processed {len(weekly_data)} weekly OHLCV items")
+                logger.info(f"Date range: {weekly_data[0]['timestamp']} to {weekly_data[-1]['timestamp']}")
+            
+            return weekly_data
+            
         except Exception as e:
             logger.error(f"Error getting weekly OHLCV data: {str(e)}")
             return []
