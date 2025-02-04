@@ -360,13 +360,11 @@ async def main():
         logger.info(f"Auditing token: {token_address}")
         
         # Initialize with API keys from environment
-        birdeye = BirdeyeDataCollector(api_key=os.getenv('BIRDEYE_API_KEY', '37f87df908cb48fb88fffd6911bc74b3'))
+        birdeye = BirdeyeDataCollector(api_key=os.getenv('BIRDEYE_API_KEY'))
         
         # Initialize Google Sheets integration
-        sheets = GoogleSheetsIntegration(
-            os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE'),
-            os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')
-        )
+        sheets = GoogleSheetsIntegration()
+        sheets.authenticate()
         
         # Initialize auditor with sheets integration
         auditor = TokenAuditor(birdeye=birdeye, sheets=sheets)
