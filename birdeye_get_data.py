@@ -60,6 +60,10 @@ The BirdeyeDataCollector class contains the following key functions:
 14. get_token_holders(token_address: str, limit: int = 10)
     - Get the top holders for a token
     - Returns list of holder information including address and balance
+
+15. get_ohlcv(token_address: str, interval_type: str, time_from: int, time_to: int)
+    - Get OHLCV data for a token with custom timeframe
+    - Returns list of OHLCV data points, each containing timestamp, o, h, l, c, v
 """
 
 import logging
@@ -800,6 +804,61 @@ class BirdeyeDataCollector:
         except Exception as e:
             logger.error(f"Error getting wallet portfolio: {str(e)}")
             return {}
+
+    async def get_ohlcv(self, token_address: str, interval_type: str, time_from: int, time_to: int) -> List[Dict]:
+        """Get OHLCV data for a token with custom timeframe.
+        
+        Args:
+            token_address: The token address to analyze
+            interval_type: Time interval for candles (e.g. "1H", "15m", "1D", "1W")
+            time_from: Start timestamp
+            time_to: End timestamp
+            
+        Returns:
+            List of OHLCV data points, each containing timestamp, o, h, l, c, v
+        """
+        endpoint = "defi/ohlcv"
+        params = {
+            "address": token_address,
+            "type": interval_type,
+            "time_from": time_from,
+            "time_to": time_to
+        }
+        
+        try:
+            logger.info(f"Fetching OHLCV data for token {token_address} with interval {interval_type}")
+            data = await self._make_request(endpoint, params)
+            
+            if not data or "data" not in data or "items" not in data["data"]:
+                logger.error(f"Invalid OHLCV response format: {data}")
+                return []
+                
+            items = data["data"]["items"]
+            logger.info(f"Received {len(items)} OHLCV items")
+            
+            processed_items = []
+            for item in items:
+                try:
+                    timestamp = datetime.fromtimestamp(item["timestamp"]).strftime("%Y-%m-%d %H:%M")
+                    processed_item = {
+                        "timestamp": timestamp,
+                        "open": float(item["o"]),
+                        "high": float(item["h"]),
+                        "low": float(item["l"]),
+                        "close": float(item["c"]),
+                        "volume": float(item["v"])
+                    }
+                    processed_items.append(processed_item)
+                except (KeyError, ValueError, TypeError) as e:
+                    logger.error(f"Error processing OHLCV item: {e}")
+                    continue
+                    
+            logger.info(f"Successfully processed {len(processed_items)} OHLCV items")
+            return processed_items
+            
+        except Exception as e:
+            logger.error(f"Error fetching OHLCV data: {str(e)}")
+            return []
 
 async def main():
     """Main function to test the BirdeyeDataCollector class."""
