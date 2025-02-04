@@ -97,10 +97,17 @@ class BirdeyeDataCollector:
         for attempt in range(3):
             try:
                 async with aiohttp.ClientSession() as session:
-                    logger.info(f"Making request to {url} with params {params} (attempt {attempt + 1}/3)")
+                    logger.info(f"Making request to {url} with headers: {self.headers} and params: {params} (attempt {attempt + 1}/3)")
                     async with session.get(url, headers=self.headers, params=params) as response:
                         if response.status == 521:
                             logger.warning(f"Birdeye API server is down (attempt {attempt + 1}/3)")
+                            if attempt < 2:
+                                await asyncio.sleep(5)
+                                continue
+                            return {}
+                            
+                        if response.status == 401:
+                            logger.error(f"Unauthorized access. Please check your API key. Headers: {self.headers}")
                             if attempt < 2:
                                 await asyncio.sleep(5)
                                 continue
