@@ -2,6 +2,8 @@
 aiohttp>=3.9.1
 asyncio>=3.4.3
 python-dotenv>=1.0.0
+Flask>=3.0.0
+gunicorn>=21.2.0
 
 # Data Collection & Analysis
 pandas>=2.1.4

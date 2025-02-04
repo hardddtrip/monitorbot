@@ -1,9 +1,11 @@
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import os.path
+import json
 from datetime import datetime
 import logging
 from typing import List, Dict
+from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
 
@@ -15,22 +17,36 @@ class GoogleSheetsIntegration:
             credentials_file: Path to the service account credentials JSON file
             spreadsheet_id: The ID of the Google Sheet to write to
         """
-        self.credentials_file = credentials_file
         self.spreadsheet_id = spreadsheet_id
-        self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
-        self.service = None
-        self.sheet_name = "Trade Data"  # Use a more descriptive sheet name
-        self.authenticate()
-        self._ensure_sheet_exists()
+        
+        try:
+            # First try to use credentials from environment variable
+            creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+            if creds_json:
+                creds_info = json.loads(creds_json)
+                credentials = service_account.Credentials.from_service_account_info(
+                    creds_info,
+                    scopes=['https://www.googleapis.com/auth/spreadsheets']
+                )
+            else:
+                # Fall back to file-based credentials
+                credentials = service_account.Credentials.from_service_account_file(
+                    credentials_file,
+                    scopes=['https://www.googleapis.com/auth/spreadsheets']
+                )
+            
+            self.service = build('sheets', 'v4', credentials=credentials)
+            self.sheet_name = "TradeData"  # Use a more descriptive sheet name
+            self.authenticate()
+            self._ensure_sheet_exists()
+
+        except Exception as e:
+            logging.error(f"Failed to initialize Google Sheets: {str(e)}")
+            raise
 
     def authenticate(self):
         """Authenticate with Google Sheets API using service account."""
         try:
-            credentials = service_account.Credentials.from_service_account_file(
-                self.credentials_file, 
-                scopes=self.scopes
-            )
-            self.service = build('sheets', 'v4', credentials=credentials)
             logger.info("Successfully authenticated with Google Sheets")
         except Exception as e:
             logger.error(f"Error authenticating with Google Sheets: {e}")
@@ -80,45 +96,58 @@ class GoogleSheetsIntegration:
             logger.error(f"Error ensuring sheet exists: {e}")
             raise
 
-    def ensure_sheet_exists(self, sheet_name: str, headers: List[str] = None):
-        """Ensure a sheet exists with the given name and headers."""
+    def ensure_sheet_exists(self, sheet_name: str) -> bool:
+        """Ensure a sheet exists, create it if it doesn't."""
         try:
-            # Try to add the sheet
-            body = {
-                'requests': [{
-                    'addSheet': {
-                        'properties': {
-                            'title': sheet_name
+            # Check if sheet exists by getting its ID
+            sheet_id = self._get_sheet_id(sheet_name)
+            
+            if sheet_id is not None:
+                logger.info(f"Sheet '{sheet_name}' already exists")
+                return True
+                
+            # Create new sheet if it doesn't exist
+            try:
+                body = {
+                    'requests': [{
+                        'addSheet': {
+                            'properties': {
+                                'title': sheet_name
+                            }
                         }
-                    }
-                }]
-            }
-            self.service.spreadsheets().batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body=body
-            ).execute()
-            logger.info(f"Created new sheet: {sheet_name}")
+                    }]
+                }
+                self.service.spreadsheets().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body=body
+                ).execute()
+                logger.info(f"Created new sheet '{sheet_name}'")
+                return True
+                
+            except Exception as create_error:
+                logger.error(f"Error creating sheet: {str(create_error)}")
+                return False
+                
         except Exception as e:
-            logger.info(f"Sheet '{sheet_name}' might already exist: {str(e)}")
-        
-        # If headers are provided, check if they need to be added
-        if headers:
-            result = self.service.spreadsheets().values().get(
-                spreadsheetId=self.spreadsheet_id,
-                range=f"{sheet_name}!A1:Z1"
+            logger.error(f"Error checking sheet existence: {str(e)}")
+            return False
+
+    def _get_sheet_id(self, sheet_name: str) -> int:
+        """Get sheet ID by name."""
+        try:
+            spreadsheet = self.service.spreadsheets().get(
+                spreadsheetId=self.spreadsheet_id
             ).execute()
             
-            if not result.get('values'):
-                # Sheet is empty, add headers
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id,
-                    range=f"{sheet_name}!A1",
-                    valueInputOption="RAW",
-                    body={
-                        "values": [headers]
-                    }
-                ).execute()
-                logger.info(f"Added headers to sheet: {sheet_name}")
+            for sheet in spreadsheet['sheets']:
+                if sheet['properties']['title'] == sheet_name:
+                    return sheet['properties']['sheetId']
+                    
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting sheet ID: {str(e)}")
+            return None
 
     def append_to_sheet(self, sheet_name: str, rows: List[List]):
         """Append rows to a sheet."""
@@ -183,7 +212,7 @@ class GoogleSheetsIntegration:
 
     def append_audit_results(self, audit_results: List):
         """Append audit results to the sheet."""
-        sheet_name = "Token Audits"
+        sheet_name = "TokenAudits"
         try:
             # Get or create sheet
             sheet_id = self._get_sheet_id(sheet_name)
@@ -222,21 +251,6 @@ class GoogleSheetsIntegration:
             print(f"Error in append_audit_results: {str(e)}")
             raise
 
-    def _get_sheet_id(self, sheet_name: str) -> int:
-        """Get the sheet ID for a given sheet name."""
-        try:
-            sheets = self.service.spreadsheets().get(
-                spreadsheetId=self.spreadsheet_id
-            ).execute()['sheets']
-            
-            for sheet in sheets:
-                if sheet['properties']['title'] == sheet_name:
-                    return sheet['properties']['sheetId']
-            return None
-        except Exception as e:
-            print(f"Error getting sheet ID: {e}")
-            return None
-
     def _format_audit_row(self, audit_data: List) -> List:
         """Format audit results into a row for Google Sheets."""
         # audit_data is already formatted as a row
@@ -268,3 +282,196 @@ class GoogleSheetsIntegration:
             "Risks Conviction",
             "Overall Rating"
         ]
+
+    def post_holder_analysis(self, token_name: str, timestamp: str, analysis: str) -> bool:
+        """Post holder analysis to Google Sheets."""
+        try:
+            # Get the last row
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.sheet_name}!A:A"
+            ).execute()
+            
+            last_row = len(result.get('values', [])) + 1
+            
+            # Prepare the data
+            values = [[timestamp, token_name, analysis]]
+            
+            # Write to sheet
+            body = {
+                'values': values
+            }
+            
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.sheet_name}!A{last_row}:C{last_row}",
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error posting holder analysis to Google Sheets: {e}")
+            return False
+
+    def post_holder_token_analysis(self, holder_data: Dict):
+        """Post holder token analysis to Google Sheets."""
+        try:
+            if not holder_data:
+                logger.error("No holder data provided")
+                return False
+                
+            sheet_name = "HolderAnalysis"
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            wallet = holder_data.get('wallet')
+            total_value = holder_data.get('total_value', 0)
+            
+            logger.info(f"Preparing analysis for wallet {wallet} with total value ${total_value:,.2f}")
+            
+            # Format price changes for each token
+            token_analysis = []
+            for token in holder_data.get('tokens', []):
+                if not isinstance(token, dict):
+                    continue
+                    
+                price_changes = token.get('price_changes', {})
+                changes = price_changes.get('changes', {})
+                
+                # Format with | separators instead of newlines
+                analysis = (
+                    f"{token.get('symbol', 'Unknown')} (${token.get('valueUsd', 0):,.2f}) | "
+                    f"1W: {changes.get('1W', 0):.2f}% | "
+                    f"1M: {changes.get('1M', 0):.2f}% | "
+                    f"3M: {changes.get('3M', 0):.2f}% | "
+                    f"1Y: {changes.get('1Y', 0):.2f}% | "
+                    f"From 1Y High: {changes.get('1Y_high_to_current', 0):.2f}%"
+                )
+                token_analysis.append(analysis)
+                logger.info(f"Added analysis for token {token.get('symbol', 'Unknown')}")
+            
+            # Join all token analyses with newlines, or show "No tokens found" if empty
+            all_analysis = "\n".join(token_analysis) if token_analysis else "No tokens found in wallet"
+            
+            # Prepare row data
+            row = [timestamp, wallet, total_value, all_analysis]
+            
+            try:
+                logger.info(f"Ensuring sheet {sheet_name} exists")
+                # Ensure sheet exists
+                if not self.ensure_sheet_exists(sheet_name):
+                    logger.error(f"Failed to ensure sheet {sheet_name} exists")
+                    return False
+                
+                # Get current sheet data to determine where to insert
+                logger.info("Getting current sheet data")
+                try:
+                    result = self.service.spreadsheets().values().get(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f'{sheet_name}!A:D'
+                    ).execute()
+                    
+                    values = result.get('values', [])
+                    next_row = len(values) + 1
+                    logger.info(f"Will insert at row {next_row}")
+                    
+                    # Add headers if sheet is empty
+                    if next_row == 1:
+                        logger.info("Sheet is empty, adding headers")
+                        headers = ['Timestamp', 'Wallet Address', 'Total USD Value', 'Token Analysis']
+                        try:
+                            self.service.spreadsheets().values().update(
+                                spreadsheetId=self.spreadsheet_id,
+                                range=f'{sheet_name}!A1:D1',
+                                valueInputOption='RAW',
+                                body={'values': [headers]}
+                            ).execute()
+                            next_row = 2
+                            logger.info("Successfully added headers")
+                        except Exception as header_error:
+                            logger.error(f"Error adding headers: {str(header_error)}")
+                            return False
+                    
+                    # Add data row and empty row for spacing
+                    range_name = f"{sheet_name}!A{next_row}:D{next_row + 1}"
+                    body = {
+                        'values': [
+                            row,  # Data row
+                            ['', '', '', '']  # Empty row for spacing
+                        ]
+                    }
+                    
+                    logger.info(f"Posting data to range {range_name}")
+                    try:
+                        self.service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range=range_name,
+                            valueInputOption='RAW',
+                            body=body
+                        ).execute()
+                        logger.info("Successfully posted data")
+                        
+                        # Apply formatting
+                        sheet_id = self._get_sheet_id(sheet_name)
+                        if sheet_id:
+                            logger.info("Applying sheet formatting")
+                            requests = [
+                                # Auto-resize columns
+                                {
+                                    'autoResizeDimensions': {
+                                        'dimensions': {
+                                            'sheetId': sheet_id,
+                                            'dimension': 'COLUMNS',
+                                            'startIndex': 0,
+                                            'endIndex': 4
+                                        }
+                                    }
+                                },
+                                # Enable text wrapping for the token analysis column
+                                {
+                                    'repeatCell': {
+                                        'range': {
+                                            'sheetId': sheet_id,
+                                            'startColumnIndex': 3,
+                                            'endColumnIndex': 4
+                                        },
+                                        'cell': {
+                                            'userEnteredFormat': {
+                                                'wrapStrategy': 'WRAP'
+                                            }
+                                        },
+                                        'fields': 'userEnteredFormat.wrapStrategy'
+                                    }
+                                }
+                            ]
+                            
+                            try:
+                                self.service.spreadsheets().batchUpdate(
+                                    spreadsheetId=self.spreadsheet_id,
+                                    body={'requests': requests}
+                                ).execute()
+                                logger.info("Successfully applied formatting")
+                                return True
+                            except Exception as format_error:
+                                logger.error(f"Error applying formatting: {str(format_error)}")
+                                # Continue since data was posted successfully
+                                return True
+                        else:
+                            logger.error(f"Could not find sheet ID for {sheet_name}")
+                            return False
+                            
+                    except Exception as update_error:
+                        logger.error(f"Error posting data: {str(update_error)}")
+                        return False
+                        
+                except Exception as get_error:
+                    logger.error(f"Error getting sheet data: {str(get_error)}")
+                    return False
+                    
+            except Exception as sheet_error:
+                logger.error(f"Error with sheet operations: {str(sheet_error)}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error in post_holder_token_analysis: {str(e)}")
+            return False
