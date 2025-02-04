@@ -194,8 +194,9 @@ class BirdeyeDataCollector:
 
     async def get_token_data(self, token_address: str) -> Dict:
         """Get comprehensive token data including price, volume, and liquidity metrics"""
+        endpoint = "defi/token_overview"  # Exact endpoint from reference
         params = {"address": token_address}
-        data = await self._make_request("defi/token_overview", params)
+        data = await self._make_request(endpoint, params)
         
         if not data or not data.get("success", False):
             logger.error(f"Failed to get token data for {token_address}")
@@ -464,17 +465,17 @@ class BirdeyeDataCollector:
         """Get 1-minute OHLCV data for the specified number of minutes."""
         try:
             # Calculate timestamps
-            end_time = int(time.time())
-            start_time = end_time - (minutes * 60)  # Convert minutes to seconds
+            now = int(datetime.now().timestamp())
+            start_time = now - (minutes * 60)
             
             params = {
                 "address": token_address,
-                "type": "1m",  # 1-minute intervals
+                "type": "1m",
                 "time_from": start_time,
-                "time_to": end_time
+                "time_to": now
             }
             
-            data = await self._make_request("ohlcv", params)
+            data = await self._make_request("defi/ohlcv", params)  # Exact endpoint from reference
             if data and "data" in data and "items" in data["data"]:
                 items = data["data"]["items"]
                 
@@ -621,7 +622,7 @@ class BirdeyeDataCollector:
                 "time_to": now
             }
             
-            data = await self._make_request("ohlcv", params)
+            data = await self._make_request("defi/ohlcv", params)  # Exact endpoint from reference
             if data and "data" in data and "items" in data["data"]:
                 items = data["data"]["items"]
                 
@@ -663,7 +664,7 @@ class BirdeyeDataCollector:
             The Birdeye API response is expected to contain a list of holders under the 'data.items' field,
             where each holder has 'owner' (wallet address) and 'ui_amount' (token balance) fields.
         """
-        endpoint = "defi/token/holder"  # Updated to use correct endpoint path
+        endpoint = "defi/v3/token/holder"  # Exact endpoint from reference
         params = {
             "address": token_address,
             "limit": limit,
@@ -720,6 +721,15 @@ class BirdeyeDataCollector:
         except Exception as e:
             logging.error(f"Error getting token holders: {e}")
             return []
+
+    async def get_wallet_portfolio(self, wallet_address: str) -> Dict:
+        """Get wallet portfolio from Birdeye API."""
+        endpoint = "v1/wallet/token_list"  # Exact endpoint from reference
+        params = {
+            "wallet": wallet_address
+        }
+        data = await self._make_request(endpoint, params)
+        return data
 
 async def main():
     """Main function to test the BirdeyeDataCollector class."""
