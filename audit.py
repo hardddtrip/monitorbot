@@ -110,8 +110,14 @@ class TokenAuditor:
         
         try:
             logger.info("Calling Claude API...")
-            logger.info(f"API Key: {headers['x-api-key']}")
+            logger.info(f"API Key present: {bool(headers['x-api-key'])}")
             logger.info(f"Prompt: {prompt}")
+            
+            if not headers['x-api-key']:
+                return {
+                    "content": None,
+                    "error": "CLAUDE_API_KEY environment variable not set"
+                }
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -140,14 +146,16 @@ class TokenAuditor:
                     result = await response.json()
                     logger.info(f"Claude API response: {json.dumps(result, indent=2)}")
                     
-                    if not result.get("content"):
+                    # Handle the response correctly
+                    if "content" not in result or not result["content"]:
                         return {
                             "content": None,
                             "error": "No content in response"
                         }
                     
+                    content = result["content"][0]["text"] if isinstance(result["content"], list) else result["content"]
                     return {
-                        "content": result["content"][0]["text"],
+                        "content": content,
                         "error": None
                     }
         except Exception as e:
