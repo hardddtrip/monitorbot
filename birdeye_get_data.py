@@ -82,8 +82,9 @@ class BirdeyeDataCollector:
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so/defi"
         self.headers = {
-            "x-api-key": str(api_key),  # Ensure API key is a string
-            "accept": "application/json"
+            "X-API-KEY": str(api_key),  # Ensure API key is a string
+            "accept": "application/json",
+            "x-chain": "solana"
         }
 
     async def _make_request(self, endpoint: str, params: Dict = None) -> Dict:
@@ -635,12 +636,12 @@ class BirdeyeDataCollector:
             logger.error(f"Error getting weekly OHLCV data: {str(e)}")
             return []
 
-    async def get_token_holders(self, token_address: str, limit: int = 10) -> List[Dict]:
+    async def get_token_holders(self, token_address: str, limit: int = 100) -> List[Dict]:
         """Get the top holders for a token.
         
         Args:
             token_address: The token address to get holders for
-            limit: Maximum number of holders to return (default: 10)
+            limit: Maximum number of holders to return (default: 100)
             
         Returns:
             List of dictionaries containing holder information:
@@ -652,7 +653,7 @@ class BirdeyeDataCollector:
             The Birdeye API response is expected to contain a list of holders under the 'data.items' field,
             where each holder has 'owner' (wallet address) and 'ui_amount' (token balance) fields.
         """
-        endpoint = "v3/token/holder"
+        endpoint = "defi/v3/token/holder"  # Update this line to use the full path
         params = {
             "address": token_address,
             "limit": limit,

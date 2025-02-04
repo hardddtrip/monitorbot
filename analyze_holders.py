@@ -56,7 +56,7 @@ class HolderAnalyzer:
 
     async def get_wallet_portfolio(self, wallet_address: str, limit: int = 5) -> Dict:
         """Get wallet portfolio from Birdeye API."""
-        url = 'https://public-api.birdeye.so/defi/v3/wallet/token_list'
+        url = 'https://public-api.birdeye.so/v1/wallet/token_list'
         params = {
             "wallet": wallet_address
         }
