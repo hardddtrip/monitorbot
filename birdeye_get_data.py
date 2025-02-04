@@ -85,7 +85,7 @@ class BirdeyeDataCollector:
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so"
         self.headers = {
-            "X-API-KEY": str(self.api_key),  # Ensure API key is a string
+            "X-API-KEY": self.api_key,  # Use the api_key attribute directly
             "accept": "application/json",
             "x-chain": "solana"
         }
