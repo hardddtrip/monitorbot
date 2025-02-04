@@ -21,14 +21,29 @@ def analyze_token():
         # Initialize components
         birdeye_api_key = os.getenv("BIRDEYE_API_KEY")
         spreadsheet_id = os.getenv("SPREADSHEET_ID")
+        google_creds = os.getenv("GOOGLE_CREDENTIALS_JSON")
         
-        if not all([birdeye_api_key, os.getenv("GOOGLE_CREDENTIALS_JSON"), spreadsheet_id]):
-            return jsonify({'error': 'Missing required environment variables'}), 500
+        # Log environment variables status (without exposing sensitive data)
+        print(f"Environment variables check:")
+        print(f"BIRDEYE_API_KEY present: {bool(birdeye_api_key)}")
+        print(f"SPREADSHEET_ID present: {bool(spreadsheet_id)}")
+        print(f"GOOGLE_CREDENTIALS_JSON present: {bool(google_creds)}")
         
-        # Initialize services
-        sheets = GoogleSheetsIntegration(None, spreadsheet_id)
-        analyzer = HolderAnalyzer(birdeye_api_key, sheets)
-        auditor = TokenAuditor(birdeye_api_key, sheets)
+        if not all([birdeye_api_key, google_creds, spreadsheet_id]):
+            missing_vars = []
+            if not birdeye_api_key: missing_vars.append("BIRDEYE_API_KEY")
+            if not google_creds: missing_vars.append("GOOGLE_CREDENTIALS_JSON")
+            if not spreadsheet_id: missing_vars.append("SPREADSHEET_ID")
+            return jsonify({'error': f'Missing required environment variables: {", ".join(missing_vars)}'}), 500
+        
+        try:
+            # Initialize services
+            sheets = GoogleSheetsIntegration(None, spreadsheet_id)
+            analyzer = HolderAnalyzer(birdeye_api_key, sheets)
+            auditor = TokenAuditor(birdeye_api_key, sheets)
+        except Exception as e:
+            print(f"Error initializing services: {str(e)}")
+            return jsonify({'error': f'Service initialization failed: {str(e)}'}), 500
         
         # Run analysis asynchronously
         async def run_analysis():
