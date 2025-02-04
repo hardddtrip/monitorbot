@@ -186,24 +186,50 @@ class HolderAnalyzer:
 
         logger.info(f"Processing {len(holders)} holders for {token_name}")
         for holder in holders:
-            wallet = holder.get('owner')
-            logger.info(f"Analyzing holder: {wallet}")
-            portfolio = await self.get_wallet_portfolio(wallet)
-            if portfolio:  
+            try:
+                wallet = holder.get('owner')
+                if not wallet:
+                    continue
+
+                logger.info(f"Analyzing holder: {wallet}")
+                portfolio = await self.get_wallet_portfolio(wallet)
+                
+                if not portfolio or not isinstance(portfolio, dict):
+                    logger.error(f"Invalid portfolio data for wallet {wallet}")
+                    continue
+
+                # Create a serializable holder data dictionary
                 holder_data = {
-                    'wallet': wallet,
-                    'total_value': portfolio.get('total_value', 0),
-                    'tokens': [
-                        {
-                            'symbol': token.get('symbol', 'Unknown'),
-                            'valueUsd': token.get('valueUsd', 0),
-                            'price_changes': token.get('price_changes', {})
-                        }
-                        for token in portfolio.get('tokens', [])
-                    ]
+                    'wallet': str(wallet),
+                    'total_value': float(portfolio.get('total_value', 0)),
+                    'tokens': []
                 }
-                logger.info(f"Posting analysis for wallet {wallet} to Google Sheets")
+
+                # Process token data
+                for token in portfolio.get('tokens', []):
+                    if not isinstance(token, dict):
+                        continue
+
+                    token_data = {
+                        'symbol': str(token.get('symbol', 'Unknown')),
+                        'valueUsd': float(token.get('valueUsd', 0)),
+                        'price_changes': {
+                            'changes': {
+                                '1W': float(token.get('price_changes', {}).get('changes', {}).get('1W', 0)),
+                                '1M': float(token.get('price_changes', {}).get('changes', {}).get('1M', 0)),
+                                '3M': float(token.get('price_changes', {}).get('changes', {}).get('3M', 0)),
+                                '1Y': float(token.get('price_changes', {}).get('changes', {}).get('1Y', 0))
+                            }
+                        }
+                    }
+                    holder_data['tokens'].append(token_data)
+
+                # Post the serializable data to Google Sheets
                 self.sheets.post_holder_token_analysis(holder_data)
+                
+            except Exception as e:
+                logger.error(f"Error processing holder {wallet}: {str(e)}")
+                continue
 
 async def main():
     # Load environment variables

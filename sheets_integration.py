@@ -390,162 +390,170 @@ class GoogleSheetsIntegration:
             logger.error(f"Error posting holder analysis to Google Sheets: {str(e)}")
             return False
 
-    def post_holder_token_analysis(self, holder_data: Dict):
-        """Post holder token analysis to Google Sheets."""
+    def _format_holder_data(self, holder_data: Dict) -> List:
+        """Format holder data into a row for Google Sheets."""
         try:
-            if not holder_data:
-                logger.error("No holder data provided")
-                return False
-                
-            sheet_name = "HolderAnalysis"
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            wallet = holder_data.get('wallet')
-            total_value = holder_data.get('total_value', 0)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            wallet = str(holder_data.get("wallet", ""))
+            total_value = float(holder_data.get("total_value", 0))
             
-            logger.info(f"Preparing analysis for wallet {wallet} with total value ${total_value:,.2f}")
+            # Format token analysis
+            tokens = holder_data.get("tokens", [])
+            analysis_lines = []
             
-            # Format price changes for each token
-            token_analysis = []
-            for token in holder_data.get('tokens', []):
+            for token in tokens:
                 if not isinstance(token, dict):
                     continue
-                    
-                price_changes = token.get('price_changes', {})
-                changes = price_changes.get('changes', {})
                 
-                # Format with | separators instead of newlines
-                analysis = (
-                    f"{token.get('symbol', 'Unknown')} (${token.get('valueUsd', 0):,.2f}) | "
-                    f"1W: {changes.get('1W', 0):.2f}% | "
-                    f"1M: {changes.get('1M', 0):.2f}% | "
-                    f"3M: {changes.get('3M', 0):.2f}% | "
-                    f"1Y: {changes.get('1Y', 0):.2f}% | "
-                    f"From 1Y High: {changes.get('1Y_high_to_current', 0):.2f}%"
+                symbol = str(token.get("symbol", "Unknown"))
+                value_usd = float(token.get("valueUsd", 0))
+                
+                # Get price changes safely
+                price_changes = token.get("price_changes", {})
+                if isinstance(price_changes, dict):
+                    changes = price_changes.get("changes", {})
+                    if isinstance(changes, dict):
+                        week_change = changes.get("1W", 0)
+                        month_change = changes.get("1M", 0)
+                        three_month_change = changes.get("3M", 0)
+                        year_change = changes.get("1Y", 0)
+                    else:
+                        week_change = month_change = three_month_change = year_change = 0
+                else:
+                    week_change = month_change = three_month_change = year_change = 0
+                
+                line = (
+                    f"{symbol} (${value_usd:,.2f})\n"
+                    f"Changes: 1W: {week_change:+.2f}% | "
+                    f"1M: {month_change:+.2f}% | "
+                    f"3M: {three_month_change:+.2f}% | "
+                    f"1Y: {year_change:+.2f}%"
                 )
-                token_analysis.append(analysis)
-                logger.info(f"Added analysis for token {token.get('symbol', 'Unknown')}")
+                analysis_lines.append(line)
             
-            # Join all token analyses with newlines, or show "No tokens found" if empty
-            all_analysis = "\n".join(token_analysis) if token_analysis else "No tokens found in wallet"
+            token_analysis = "\n\n".join(analysis_lines) if analysis_lines else "No token data available"
             
-            # Prepare row data
-            row = [timestamp, wallet, total_value, all_analysis]
+            return [timestamp, wallet, total_value, token_analysis]
             
+        except Exception as e:
+            logger.error(f"Error formatting holder data: {str(e)}")
+            return [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", 0, "Error formatting data"]
+
+    def post_holder_token_analysis(self, holder_data: Dict):
+        """Post holder token analysis to Google Sheets."""
+        sheet_name = "HolderAnalysis"
+        
+        try:
+            self.ensure_sheet_exists(sheet_name)
+            formatted_row = self._format_holder_data(holder_data)
+            
+            # Get the next empty row
             try:
-                logger.info(f"Ensuring sheet {sheet_name} exists")
-                # Ensure sheet exists
-                if not self.ensure_sheet_exists(sheet_name):
-                    logger.error(f"Failed to ensure sheet {sheet_name} exists")
-                    return False
+                result = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f'{sheet_name}!A:D'
+                ).execute()
                 
-                # Get current sheet data to determine where to insert
-                logger.info("Getting current sheet data")
-                try:
-                    result = self.service.spreadsheets().values().get(
-                        spreadsheetId=self.spreadsheet_id,
-                        range=f'{sheet_name}!A:D'
-                    ).execute()
-                    
-                    values = result.get('values', [])
-                    next_row = len(values) + 1
-                    logger.info(f"Will insert at row {next_row}")
-                    
-                    # Add headers if sheet is empty
-                    if next_row == 1:
-                        logger.info("Sheet is empty, adding headers")
-                        headers = ['Timestamp', 'Wallet Address', 'Total USD Value', 'Token Analysis']
-                        try:
-                            self.service.spreadsheets().values().update(
-                                spreadsheetId=self.spreadsheet_id,
-                                range=f'{sheet_name}!A1:D1',
-                                valueInputOption='RAW',
-                                body={'values': [headers]}
-                            ).execute()
-                            next_row = 2
-                            logger.info("Successfully added headers")
-                        except Exception as header_error:
-                            logger.error(f"Error adding headers: {str(header_error)}")
-                            return False
-                    
-                    # Add data row and empty row for spacing
-                    range_name = f"{sheet_name}!A{next_row}:D{next_row + 1}"
-                    body = {
-                        'values': [
-                            row,  # Data row
-                            ['', '', '', '']  # Empty row for spacing
-                        ]
-                    }
-                    
-                    logger.info(f"Posting data to range {range_name}")
+                values = result.get('values', [])
+                next_row = len(values) + 1
+                logger.info(f"Will insert at row {next_row}")
+                
+                # Add headers if sheet is empty
+                if next_row == 1:
+                    logger.info("Sheet is empty, adding headers")
+                    headers = ['Timestamp', 'Wallet Address', 'Total USD Value', 'Token Analysis']
                     try:
                         self.service.spreadsheets().values().update(
                             spreadsheetId=self.spreadsheet_id,
-                            range=range_name,
+                            range=f'{sheet_name}!A1:D1',
                             valueInputOption='RAW',
-                            body=body
+                            body={'values': [headers]}
                         ).execute()
-                        logger.info("Successfully posted data")
-                        
-                        # Apply formatting
-                        sheet_id = self._get_sheet_id(sheet_name)
-                        if sheet_id:
-                            logger.info("Applying sheet formatting")
-                            requests = [
-                                # Auto-resize columns
-                                {
-                                    'autoResizeDimensions': {
-                                        'dimensions': {
-                                            'sheetId': sheet_id,
-                                            'dimension': 'COLUMNS',
-                                            'startIndex': 0,
-                                            'endIndex': 4
-                                        }
-                                    }
-                                },
-                                # Enable text wrapping for the token analysis column
-                                {
-                                    'repeatCell': {
-                                        'range': {
-                                            'sheetId': sheet_id,
-                                            'startColumnIndex': 3,
-                                            'endColumnIndex': 4
-                                        },
-                                        'cell': {
-                                            'userEnteredFormat': {
-                                                'wrapStrategy': 'WRAP'
-                                            }
-                                        },
-                                        'fields': 'userEnteredFormat.wrapStrategy'
+                        next_row = 2
+                        logger.info("Successfully added headers")
+                    except Exception as header_error:
+                        logger.error(f"Error adding headers: {str(header_error)}")
+                        return False
+
+                # Add data row and empty row for spacing
+                range_name = f"{sheet_name}!A{next_row}:D{next_row + 1}"
+                body = {
+                    'values': [
+                        formatted_row,  # Data row
+                        ['', '', '', '']  # Empty row for spacing
+                    ]
+                }
+                
+                logger.info(f"Posting data to range {range_name}")
+                try:
+                    self.service.spreadsheets().values().update(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=range_name,
+                        valueInputOption='RAW',
+                        body=body
+                    ).execute()
+                    logger.info("Successfully posted data")
+                    
+                    # Apply formatting
+                    sheet_id = self._get_sheet_id(sheet_name)
+                    if sheet_id:
+                        logger.info("Applying sheet formatting")
+                        requests = [
+                            # Auto-resize columns
+                            {
+                                'autoResizeDimensions': {
+                                    'dimensions': {
+                                        'sheetId': sheet_id,
+                                        'dimension': 'COLUMNS',
+                                        'startIndex': 0,
+                                        'endIndex': 4
                                     }
                                 }
-                            ]
-                            
-                            try:
-                                self.service.spreadsheets().batchUpdate(
-                                    spreadsheetId=self.spreadsheet_id,
-                                    body={'requests': requests}
-                                ).execute()
-                                logger.info("Successfully applied formatting")
-                                return True
-                            except Exception as format_error:
-                                logger.error(f"Error applying formatting: {str(format_error)}")
-                                # Continue since data was posted successfully
-                                return True
-                        else:
-                            logger.error(f"Could not find sheet ID for {sheet_name}")
-                            return False
-                            
-                    except Exception as update_error:
-                        logger.error(f"Error posting data: {str(update_error)}")
+                            },
+                            # Enable text wrapping for the token analysis column
+                            {
+                                'repeatCell': {
+                                    'range': {
+                                        'sheetId': sheet_id,
+                                        'startColumnIndex': 3,
+                                        'endColumnIndex': 4
+                                    },
+                                    'cell': {
+                                        'userEnteredFormat': {
+                                            'wrapStrategy': 'WRAP'
+                                        }
+                                    },
+                                    'fields': 'userEnteredFormat.wrapStrategy'
+                                }
+                            }
+                        ]
+                        
+                        try:
+                            self.service.spreadsheets().batchUpdate(
+                                spreadsheetId=self.spreadsheet_id,
+                                body={'requests': requests}
+                            ).execute()
+                            logger.info("Successfully applied formatting")
+                            return True
+                        except Exception as format_error:
+                            logger.error(f"Error applying formatting: {str(format_error)}")
+                            # Continue since data was posted successfully
+                            return True
+                    else:
+                        logger.error(f"Could not find sheet ID for {sheet_name}")
                         return False
                         
-                except Exception as get_error:
-                    logger.error(f"Error getting sheet data: {str(get_error)}")
+                except Exception as update_error:
+                    logger.error(f"Error posting data: {str(update_error)}")
                     return False
-                    
-            except Exception as sheet_error:
-                logger.error(f"Error with sheet operations: {str(sheet_error)}")
+                        
+            except Exception as get_error:
+                logger.error(f"Error getting sheet data: {str(get_error)}")
                 return False
+                    
+        except Exception as sheet_error:
+            logger.error(f"Error with sheet operations: {str(sheet_error)}")
+            return False
                 
         except Exception as e:
             logger.error(f"Error in post_holder_token_analysis: {str(e)}")
