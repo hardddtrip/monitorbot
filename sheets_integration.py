@@ -276,10 +276,57 @@ class GoogleSheetsIntegration:
             logger.error(f"Error appending audit results: {str(e)}")
             raise
 
-    def _format_audit_row(self, audit_data: List) -> List:
+    def _format_audit_row(self, audit_data: Dict) -> List:
         """Format audit results into a row for Google Sheets."""
-        # audit_data is already formatted as a row
-        return audit_data
+        try:
+            # Extract data from the audit_data dictionary
+            st_momentum = audit_data.get("st_momentum", {})
+            mt_momentum = audit_data.get("mt_momentum", {})
+            lt_outlook = audit_data.get("lt_outlook", {})
+            risks = audit_data.get("risks", {})
+            
+            # Format into a row matching the headers
+            row = [
+                audit_data.get("timestamp", ""),
+                audit_data.get("token", ""),
+                audit_data.get("contract", ""),
+                audit_data.get("name", ""),
+                audit_data.get("market_cap", 0),
+                
+                # ST Momentum
+                st_momentum.get("score", 0),
+                st_momentum.get("comment", ""),
+                st_momentum.get("conviction", 0),
+                st_momentum.get("support", 0),
+                st_momentum.get("resistance", 0),
+                
+                # MT Momentum
+                mt_momentum.get("score", 0),
+                mt_momentum.get("comment", ""),
+                mt_momentum.get("conviction", 0),
+                mt_momentum.get("support", 0),
+                mt_momentum.get("resistance", 0),
+                
+                # LT Outlook
+                lt_outlook.get("score", 0),
+                lt_outlook.get("comment", ""),
+                lt_outlook.get("conviction", 0),
+                
+                # Risks
+                risks.get("score", 0),
+                risks.get("comment", ""),
+                risks.get("conviction", 0),
+                
+                # Overall Rating
+                audit_data.get("overall_rating", 0)
+            ]
+            
+            return row
+            
+        except Exception as e:
+            logger.error(f"Error formatting audit row: {str(e)}")
+            # Return a row of empty values matching the number of headers
+            return [""] * len(self._get_audit_headers())
 
     def _get_audit_headers(self) -> List[str]:
         """Get headers for the audit sheet"""
