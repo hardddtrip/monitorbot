@@ -235,47 +235,62 @@ class GoogleSheetsIntegration:
     def append_audit_results(self, audit_results: List, sheet_name: str = "TokenAudits"):
         """Append audit results to the sheet."""
         try:
+            logger.info(f"Starting append_audit_results with sheet_name: {sheet_name}")
+            
             # Get or create sheet
             sheet_id = self._get_sheet_id(sheet_name)
+            logger.info(f"Got sheet_id: {sheet_id} for sheet: {sheet_name}")
+            
             if not sheet_id:
                 logger.info(f"Creating new sheet {sheet_name}")
-                self.service.spreadsheets().batchUpdate(
+                create_response = self.service.spreadsheets().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
                     body={'requests': [{'addSheet': {'properties': {'title': sheet_name}}}]}
                 ).execute()
+                logger.info(f"Create sheet response: {json.dumps(create_response, indent=2)}")
                 
                 # Add headers if new sheet
                 logger.info("Adding headers")
                 headers = self._get_audit_headers()
-                self.service.spreadsheets().values().update(
+                headers_response = self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
                     range=f"{sheet_name}!A1:V1",
                     valueInputOption="RAW",
                     body={"values": [headers]}
                 ).execute()
+                logger.info(f"Headers update response: {json.dumps(headers_response, indent=2)}")
 
             # If audit_results is already a list, use it directly
             if isinstance(audit_results, list):
                 row = audit_results
+                logger.info("Using provided audit_results list directly")
             else:
                 # Otherwise format it as a dictionary
+                logger.info("Formatting audit_results dictionary into row")
                 row = self._format_audit_row(audit_results)
+            
+            logger.info(f"Prepared row data: {json.dumps(row, indent=2)}")
 
             # Append data
-            logger.info("Appending data")
+            logger.info(f"Appending data to sheet {sheet_name}")
             result = self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
                 range=f"{sheet_name}!A:V",
                 valueInputOption="RAW",
                 body={"values": [row]}
             ).execute()
-            logger.info(f"Successfully appended audit results: {result}")
+            logger.info(f"Successfully appended audit results: {json.dumps(result, indent=2)}")
 
         except HttpError as e:
-            logger.error(f"Error appending audit results: {e.resp.status} {e.resp.reason}")
+            error_details = {
+                'status': e.resp.status,
+                'reason': e.resp.reason,
+                'body': e.content.decode() if hasattr(e, 'content') else None
+            }
+            logger.error(f"HTTP Error appending audit results: {json.dumps(error_details, indent=2)}")
             raise
         except Exception as e:
-            logger.error(f"Error appending audit results: {str(e)}")
+            logger.error(f"Error appending audit results: {str(e)}", exc_info=True)
             raise
 
     def _format_audit_row(self, audit_data: Dict) -> List:

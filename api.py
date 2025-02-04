@@ -22,16 +22,32 @@ def run_analysis_background(token_address: str, birdeye_api_key: str, spreadshee
             auditor = TokenAuditor(birdeye, sheets)
 
             # Run analysis and wait for both to complete
-            await asyncio.gather(
-                analyzer.analyze_holder_data(token_address, ""),
-                auditor.audit_token(token_address)
-            )
+            try:
+                holder_analysis, audit_results = await asyncio.gather(
+                    analyzer.analyze_holder_data(token_address, ""),
+                    auditor.audit_token(token_address)
+                )
+                print(f"Holder analysis completed: {bool(holder_analysis)}")
+                print(f"Audit results completed: {bool(audit_results)}")
+                
+                # Explicitly post audit results to sheets
+                if audit_results:
+                    print("Posting audit results to sheets...")
+                    await auditor.post_audit_to_sheets(audit_results)
+                    print("Successfully posted audit results to sheets")
+                else:
+                    print("No audit results to post to sheets")
+            except Exception as analysis_error:
+                print(f"Error during analysis: {str(analysis_error)}")
+                raise
             
             # Log completion
             print(f"Analysis completed for token {token_address}")
             
         except Exception as e:
             print(f"Error in background analysis: {str(e)}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
             raise
 
     # Create a new event loop for the background thread
