@@ -23,25 +23,37 @@ class GoogleSheetsIntegration:
             # First try to use credentials from environment variable
             creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
             if creds_json:
-                creds_info = json.loads(creds_json)
-                credentials = service_account.Credentials.from_service_account_info(
-                    creds_info,
-                    scopes=['https://www.googleapis.com/auth/spreadsheets']
-                )
+                logger.info("Using credentials from GOOGLE_CREDENTIALS_JSON environment variable")
+                try:
+                    creds_info = json.loads(creds_json)
+                    logger.info("Successfully parsed credentials JSON")
+                    credentials = service_account.Credentials.from_service_account_info(
+                        creds_info,
+                        scopes=['https://www.googleapis.com/auth/spreadsheets']
+                    )
+                    logger.info("Successfully created credentials from service account info")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing GOOGLE_CREDENTIALS_JSON: {str(e)}")
+                    raise
+                except Exception as e:
+                    logger.error(f"Error creating credentials from service account info: {str(e)}")
+                    raise
             else:
-                # Fall back to file-based credentials
+                logger.info("No GOOGLE_CREDENTIALS_JSON found, falling back to file-based credentials")
                 credentials = service_account.Credentials.from_service_account_file(
                     credentials_file,
                     scopes=['https://www.googleapis.com/auth/spreadsheets']
                 )
             
             self.service = build('sheets', 'v4', credentials=credentials)
+            logger.info("Successfully built Google Sheets service")
             self.sheet_name = "TradeData"  # Use a more descriptive sheet name
             self.authenticate()
             self._ensure_sheet_exists()
+            logger.info("Successfully verified sheet exists")
 
         except Exception as e:
-            logging.error(f"Failed to initialize Google Sheets: {str(e)}")
+            logger.error(f"Failed to initialize Google Sheets: {str(e)}")
             raise
 
     def authenticate(self):
@@ -151,16 +163,23 @@ class GoogleSheetsIntegration:
 
     def append_to_sheet(self, sheet_name: str, rows: List[List]):
         """Append rows to a sheet."""
-        self.service.spreadsheets().values().append(
-            spreadsheetId=self.spreadsheet_id,
-            range=f"{sheet_name}!A1",
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={
-                "values": rows
-            }
-        ).execute()
-        logger.info(f"Appended {len(rows)} rows to sheet: {sheet_name}")
+        try:
+            self.service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{sheet_name}!A1",
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={
+                    "values": rows
+                }
+            ).execute()
+            logger.info(f"Appended {len(rows)} rows to sheet: {sheet_name}")
+        except HttpError as e:
+            logger.error(f"Error appending to sheet: {e.resp.status} {e.resp.reason}")
+            raise
+        except Exception as e:
+            logger.error(f"Error appending to sheet: {str(e)}")
+            raise
 
     def append_trades(self, trades: list, fetch_time: datetime):
         """Append trades to the Google Sheet.
@@ -206,8 +225,11 @@ class GoogleSheetsIntegration:
             
             logger.info(f"Appended {len(values)} trades to Google Sheet")
             return result
+        except HttpError as e:
+            logger.error(f"Error appending trades to Google Sheet: {e.resp.status} {e.resp.reason}")
+            raise
         except Exception as e:
-            logger.error(f"Error appending trades to Google Sheet: {e}")
+            logger.error(f"Error appending trades to Google Sheet: {str(e)}")
             raise
 
     def append_audit_results(self, audit_results: List):
@@ -217,14 +239,14 @@ class GoogleSheetsIntegration:
             # Get or create sheet
             sheet_id = self._get_sheet_id(sheet_name)
             if not sheet_id:
-                print(f"Creating new sheet {sheet_name}")
+                logger.info(f"Creating new sheet {sheet_name}")
                 self.service.spreadsheets().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
                     body={'requests': [{'addSheet': {'properties': {'title': sheet_name}}}]}
                 ).execute()
                 
                 # Add headers if new sheet
-                print("Adding headers")
+                logger.info("Adding headers")
                 headers = self._get_audit_headers()
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
@@ -234,21 +256,24 @@ class GoogleSheetsIntegration:
                 ).execute()
 
             # Format data
-            print("Formatting data")
+            logger.info("Formatting data")
             row = self._format_audit_row(audit_results)
 
             # Append data
-            print("Appending data")
+            logger.info("Appending data")
             result = self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
                 range=f"{sheet_name}!A:V",
                 valueInputOption="RAW",
                 body={"values": [row]}
             ).execute()
-            print(f"Successfully appended audit results: {result}")
+            logger.info(f"Successfully appended audit results: {result}")
 
+        except HttpError as e:
+            logger.error(f"Error appending audit results: {e.resp.status} {e.resp.reason}")
+            raise
         except Exception as e:
-            print(f"Error in append_audit_results: {str(e)}")
+            logger.error(f"Error appending audit results: {str(e)}")
             raise
 
     def _format_audit_row(self, audit_data: List) -> List:
@@ -311,8 +336,11 @@ class GoogleSheetsIntegration:
             
             return True
             
+        except HttpError as e:
+            logger.error(f"Error posting holder analysis to Google Sheets: {e.resp.status} {e.resp.reason}")
+            return False
         except Exception as e:
-            logger.error(f"Error posting holder analysis to Google Sheets: {e}")
+            logger.error(f"Error posting holder analysis to Google Sheets: {str(e)}")
             return False
 
     def post_holder_token_analysis(self, holder_data: Dict):
