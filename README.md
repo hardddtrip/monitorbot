@@ -196,6 +196,77 @@ The audit results are posted to Google Sheets with the following information:
    open metrics.html
    ```
 
+## Heroku Deployment
+
+### Prerequisites
+1. Create a [Heroku account](https://signup.heroku.com/)
+2. Install [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli)
+3. Create a new Heroku app
+4. Link your GitHub repository to Heroku for automatic deployments
+
+### Environment Variables
+Set the following environment variables in Heroku dashboard (Settings > Config Vars):
+
+1. `BIRDEYE_API_KEY` - Your Birdeye API key
+2. `GOOGLE_CREDENTIALS_JSON` - The entire contents of your service-account.json file
+3. `SPREADSHEET_ID` - Your Google Sheets spreadsheet ID
+
+### Service Account Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project or select existing one
+3. Enable Google Sheets API
+4. Create Service Account and download JSON key
+5. Share your Google Sheet with the service account email
+
+### Deployment Steps
+1. Push code to GitHub:
+```bash
+git add .
+git commit -m "Initial deployment"
+git push origin main
+```
+
+2. Enable automatic deploys in Heroku:
+   - Go to your app in Heroku dashboard
+   - Deploy tab > GitHub section
+   - Connect to GitHub
+   - Select your repository
+   - Enable automatic deploys from main branch
+
+3. Manual deploy (if needed):
+```bash
+heroku login
+git push heroku main
+```
+
+4. Verify deployment:
+```bash
+heroku logs --tail
+```
+
+### Post-Deployment
+1. Set up the Google Sheet with required tabs:
+   - "Config" tab for token address input
+   - "HolderAnalysis" tab for holder data
+   - "Audit" tab for audit results
+
+2. Add the Apps Script code to your Google Sheet:
+   - Tools > Script editor
+   - Copy the provided Apps Script code
+   - Replace API_URL with your Heroku app URL
+   - Save and authorize the script
+
+3. Test the integration:
+   - Enter a token address in the Config sheet
+   - Use the new "Token Analysis" menu
+   - Check the logs in both Google Apps Script and Heroku
+
+### Troubleshooting
+- Check Heroku logs: `heroku logs --tail`
+- Verify environment variables are set correctly
+- Ensure Google Sheet permissions are correct
+- Check Apps Script execution logs in Google Scripts dashboard
+
 ## Technical Details
 
 ### Transaction Analyzer
