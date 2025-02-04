@@ -1,5 +1,4 @@
 # Core Dependencies
-python>=3.11
 aiohttp>=3.9.1
 asyncio>=3.4.3
 python-dotenv>=1.0.0
