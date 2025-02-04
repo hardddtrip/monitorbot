@@ -57,7 +57,7 @@ The BirdeyeDataCollector class contains the following key functions:
     - Get weekly OHLCV data for the past year
     - Returns list of weekly OHLCV data points
 
-14. get_token_holders(token_address: str, limit: int = 100)
+14. get_token_holders(token_address: str, limit: int = 10)
     - Get the top holders for a token
     - Returns list of holder information including address and balance
 """
@@ -694,12 +694,12 @@ class BirdeyeDataCollector:
             logger.error(f"Error getting weekly OHLCV data: {str(e)}")
             return []
 
-    async def get_token_holders(self, token_address: str, limit: int = 100) -> List[Dict]:
+    async def get_token_holders(self, token_address: str, limit: int = 10) -> List[Dict]:
         """Get the top holders for a token.
         
         Args:
             token_address: The token address to get holders for
-            limit: Maximum number of holders to return (default: 100)
+            limit: Maximum number of holders to return (default: 10)
             
         Returns:
             List of dictionaries containing holder information:
