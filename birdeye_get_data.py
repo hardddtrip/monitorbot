@@ -70,19 +70,22 @@ import json
 import asyncio
 from sheets_integration import GoogleSheetsIntegration
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
 class BirdeyeDataCollector:
     """Class to collect and process data from Birdeye API"""
     
-    def __init__(self, api_key: str, sheets: GoogleSheetsIntegration = None):
+    def __init__(self, api_key: str = None, sheets: GoogleSheetsIntegration = None):
         """Initialize the data collector with API key and Google Sheets integration."""
-        self.api_key = api_key
+        self.api_key = api_key or os.getenv("BIRDEYE_API_KEY")
+        if not self.api_key:
+            logger.error("No API key provided and BIRDEYE_API_KEY not set in environment")
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so"
         self.headers = {
-            "X-API-KEY": str(api_key),  # Ensure API key is a string
+            "X-API-KEY": str(self.api_key),  # Ensure API key is a string
             "accept": "application/json",
             "x-chain": "solana"
         }
@@ -325,7 +328,7 @@ class BirdeyeDataCollector:
         
         for period, (time_from, time_to, interval_type) in timeframes.items():
             try:
-                url = f"{self.base_url}/ohlcv"
+                url = f"{self.base_url}/defi/ohlcv"
                 params = {
                     "address": token_address,
                     "type": interval_type,
@@ -333,7 +336,7 @@ class BirdeyeDataCollector:
                     "time_to": time_to
                 }
                 
-                data = await self._make_request("ohlcv", params)
+                data = await self._make_request("defi/ohlcv", params)
                 if data and "data" in data and "items" in data["data"] and len(data["data"]["items"]) > 1:
                     items = data["data"]["items"]
                     first_price = items[0]["o"]  # Opening price of first candle
@@ -377,7 +380,7 @@ class BirdeyeDataCollector:
                 "time_to": now
             }
             
-            data = await self._make_request("ohlcv", params)
+            data = await self._make_request("defi/ohlcv", params)
             if data and "data" in data and "items" in data["data"] and len(data["data"]["items"]) > 0:
                 items = data["data"]["items"]
                 
@@ -435,7 +438,7 @@ class BirdeyeDataCollector:
                 "time_to": now
             }
             
-            data = await self._make_request("ohlcv", params)
+            data = await self._make_request("defi/ohlcv", params)
             if data and "data" in data and "items" in data["data"]:
                 items = data["data"]["items"]
                 
@@ -620,7 +623,7 @@ class BirdeyeDataCollector:
                 "time_to": now
             }
             
-            data = await self._make_request("defi/ohlcv", params)  # Exact endpoint from reference
+            data = await self._make_request("defi/ohlcv", params)  # Updated to include /defi prefix
             if data and "data" in data and "items" in data["data"]:
                 items = data["data"]["items"]
                 
