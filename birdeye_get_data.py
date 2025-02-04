@@ -144,20 +144,23 @@ class BirdeyeDataCollector:
 
     async def get_current_price_and_volume(self, token_address: str) -> Dict:
         """Get current price and volume data for a token"""
-        url = f"{self.base_url}/price_volume/single"
+        endpoint = "defi/token_overview"  # Updated to use token_overview endpoint
         params = {
-            "address": token_address,
-            "type": "24h"
+            "address": token_address
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("success", False):
-                            return data.get("data", {})
-                    return {}
+            data = await self._make_request(endpoint, params)
+            if data and "success" in data and data["success"] and "data" in data:
+                token_data = data["data"]
+                return {
+                    "price": float(token_data.get("price", 0)),
+                    "volume_24h": float(token_data.get("v24h", 0)),
+                    "volume_24h_usd": float(token_data.get("v24hUSD", 0)),
+                    "price_change_24h": float(token_data.get("priceChange24hPercent", 0))
+                }
+            logger.error(f"Error getting price and volume: {data}")
+            return {}
         except Exception as e:
             logger.error(f"Error getting price and volume: {str(e)}")
             return {}
@@ -191,12 +194,12 @@ class BirdeyeDataCollector:
         }
         
         logger.info(f"Fetching token metadata from Birdeye for token {token_address}")
-        data = await self._make_request("defi/v3/token/overview", params)  # Updated to v3 endpoint
+        data = await self._make_request("defi/token_overview", params)
         return data.get("data", {})
 
     async def get_token_data(self, token_address: str) -> Dict:
         """Get comprehensive token data including price, volume, and liquidity metrics"""
-        endpoint = "defi/v3/token/overview"  # Updated to v3 endpoint
+        endpoint = "defi/token_overview"  # Revert to original endpoint
         params = {"address": token_address}
         data = await self._make_request(endpoint, params)
         
@@ -465,7 +468,7 @@ class BirdeyeDataCollector:
             
             params = {
                 "address": token_address,
-                "type": "1m",
+                "type": "15m",  # Updated to match reference
                 "time_from": start_time,
                 "time_to": now
             }
@@ -659,7 +662,7 @@ class BirdeyeDataCollector:
             The Birdeye API response is expected to contain a list of holders under the 'data.items' field,
             where each holder has 'owner' (wallet address) and 'ui_amount' (token balance) fields.
         """
-        endpoint = "defi/v3/token/holder"  # Exact endpoint from reference
+        endpoint = "defi/v3/token/holder"  # Update to v3 endpoint
         params = {
             "address": token_address,
             "limit": limit,
@@ -667,64 +670,40 @@ class BirdeyeDataCollector:
         }
 
         try:
-            response = await self._make_request(endpoint, params)
-            if not response or not response.get("success"):
-                logging.error(f"Failed to get token holders: {response}")
-                return []
-
-            holders_data = response.get("data", {}).get("items", [])
-            if not holders_data:
-                logging.warning("No holders data found in response")
-                return []
-
-            # Calculate total supply for percentage calculation
-            total_supply = sum(float(holder.get("ui_amount", 0)) for holder in holders_data)
-            if total_supply == 0:
-                logging.warning("Total supply is 0, cannot calculate percentages")
-                return []
-
-            holders = []
-            for holder in holders_data:
-                try:
-                    # Validate required fields exist
-                    if "owner" not in holder:
-                        logging.warning(f"Skipping holder, missing owner field: {holder}")
-                        continue
-                    if "ui_amount" not in holder:
-                        logging.warning(f"Skipping holder, missing ui_amount field: {holder}")
-                        continue
-
-                    # Validate and convert amount
-                    try:
-                        amount = float(holder["ui_amount"])
-                        percentage = (amount / total_supply) * 100 if total_supply > 0 else 0
-                    except (ValueError, TypeError):
-                        logging.warning(f"Invalid amount format for holder {holder['owner']}: {holder['ui_amount']}")
-                        continue
-
-                    holders.append({
-                        "owner": holder["owner"],
-                        "amount": amount,
-                        "percentage": percentage
-                    })
-                except Exception as e:
-                    logging.warning(f"Error processing holder data: {e}, holder: {holder}")
-                    continue
-
-            return holders
-
+            data = await self._make_request(endpoint, params)
+            if data and "success" in data and data["success"] and "data" in data:
+                holders = data["data"].get("items", [])
+                return holders
+            logger.error(f"Error getting token holders: {data}")
+            return []
         except Exception as e:
-            logging.error(f"Error getting token holders: {e}")
+            logger.error(f"Error getting token holders: {str(e)}")
             return []
 
     async def get_wallet_portfolio(self, wallet_address: str) -> Dict:
         """Get wallet portfolio from Birdeye API."""
-        endpoint = "v1/wallet/token_list"  # Exact endpoint from reference
-        params = {
-            "wallet": wallet_address
-        }
-        data = await self._make_request(endpoint, params)
-        return data
+        endpoint = "v1/wallet/token_list"
+        params = {"wallet": wallet_address}
+        
+        # Determine chain based on wallet address format
+        if wallet_address.startswith("0x"):
+            headers = {**self.headers, "x-chain": "ethereum"}  # Use ethereum chain for 0x addresses
+        else:
+            headers = self.headers  # Use default solana chain
+            
+        try:
+            url = f"{self.base_url}/{endpoint}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("success", False):
+                            return data.get("data", {})
+                    logger.error(f"Error getting wallet portfolio: {await response.text()}")
+                    return {}
+        except Exception as e:
+            logger.error(f"Error getting wallet portfolio: {str(e)}")
+            return {}
 
 async def main():
     """Main function to test the BirdeyeDataCollector class."""
