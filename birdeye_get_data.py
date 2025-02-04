@@ -162,22 +162,24 @@ class BirdeyeDataCollector:
             logger.error(f"Error getting price and volume: {str(e)}")
             return {}
 
-    async def get_recent_trades(self, token_address: str, limit: int = 100) -> List[Dict]:
+    async def get_recent_trades(self, token_address: str, limit: int = 50) -> List[Dict]:
         """Get recent trades for a token"""
-        url = f"{self.base_url}/v3/token/trade-data/single"
+        endpoint = "defi/txs/token"  # Exact match from latest reference
         params = {
             "address": token_address,
-            "limit": limit
+            "offset": 0,
+            "limit": limit,
+            "tx_type": "swap",
+            "sort_type": "desc"
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("success", False):
-                            return data.get("data", {}).get("items", [])
-                    return []
+            data = await self._make_request(endpoint, params)
+            if data and "success" in data and data["success"] and "data" in data:
+                trades = data["data"].get("items", [])
+                return trades
+            logger.error(f"Error getting recent trades: {data}")
+            return []
         except Exception as e:
             logger.error(f"Error getting recent trades: {str(e)}")
             return []
@@ -270,14 +272,11 @@ class BirdeyeDataCollector:
         logger.info(f"Processed token data: {json.dumps(token_data, indent=2)}")
         return token_data
 
-    async def get_top_traders(self, token_address: str, timeframe: str = "1h", limit: int = 10) -> Dict:
+    async def get_top_traders(self, token_address: str, timeframe: str = "24h", limit: int = 10) -> List[Dict]:
         """Get top traders data for manipulation analysis"""
-        # Format token address to remove any prefix/suffix
-        clean_address = token_address.strip().replace('0x', '')
-        
-        url = f"{self.base_url}/v2/tokens/top_traders"
+        endpoint = "defi/v2/tokens/top_traders"  # Exact match from reference
         params = {
-            "address": clean_address,
+            "address": token_address,
             "time_frame": timeframe,
             "sort_type": "desc",
             "sort_by": "volume",
@@ -286,16 +285,12 @@ class BirdeyeDataCollector:
         }
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("success", False):
-                            return data.get("data", {}).get("items", [])
-                    
-                    logger.error(f"Error fetching top traders: {response.status} - {await response.text()}")
-                    return []
-                    
+            data = await self._make_request(endpoint, params)
+            if data and "success" in data and data["success"] and "data" in data:
+                traders = data["data"].get("items", [])
+                return traders
+            logger.error(f"Error in get_top_traders: {data}")
+            return []
         except Exception as e:
             logger.error(f"Error in get_top_traders: {str(e)}")
             return []
