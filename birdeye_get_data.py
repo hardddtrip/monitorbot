@@ -191,12 +191,12 @@ class BirdeyeDataCollector:
         }
         
         logger.info(f"Fetching token metadata from Birdeye for token {token_address}")
-        data = await self._make_request("defi/token_overview", params)
+        data = await self._make_request("defi/v3/token/overview", params)  # Updated to v3 endpoint
         return data.get("data", {})
 
     async def get_token_data(self, token_address: str) -> Dict:
         """Get comprehensive token data including price, volume, and liquidity metrics"""
-        endpoint = "defi/token_overview"  # Exact endpoint from reference
+        endpoint = "defi/v3/token/overview"  # Updated to v3 endpoint
         params = {"address": token_address}
         data = await self._make_request(endpoint, params)
         
