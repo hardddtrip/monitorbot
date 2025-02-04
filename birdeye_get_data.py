@@ -103,33 +103,43 @@ class BirdeyeDataCollector:
                                 continue
                             return {}
                             
+                        response_text = await response.text()
+                        content_type = response.headers.get('content-type', '')
+                        
+                        # Check if response is HTML instead of JSON
+                        if 'text/html' in content_type:
+                            logger.error(f"Received HTML response instead of JSON. Endpoint may be incorrect: {endpoint}")
+                            if attempt < 2:
+                                await asyncio.sleep(5)
+                                continue
+                            return {}
+                            
                         if response.status != 200:
-                            error_text = await response.text()
-                            logger.error(f"Birdeye API error: {response.status} - {error_text}")
+                            logger.error(f"Birdeye API error: {response.status} - {response_text}")
                             if attempt < 2:
                                 await asyncio.sleep(5)
                                 continue
                             return {}
                         
                         try:
-                            response_text = await response.text()
                             logger.info(f"Raw response from {endpoint}: {response_text}")
                             data = json.loads(response_text)
                             logger.info(f"Parsed response from {endpoint}: {json.dumps(data, indent=2)}")
                             return data
                         except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON response: {str(e)}", exc_info=True)
+                            logger.error(f"Failed to parse JSON response: {str(e)}")
                             if attempt < 2:
                                 await asyncio.sleep(5)
                                 continue
                             return {}
+
             except Exception as e:
-                logger.error(f"Error making request to {endpoint}: {str(e)}", exc_info=True)
+                logger.error(f"Request error: {str(e)}")
                 if attempt < 2:
                     await asyncio.sleep(5)
                     continue
                 return {}
-        
+
         return {}
 
     async def get_current_price_and_volume(self, token_address: str) -> Dict:
@@ -653,7 +663,7 @@ class BirdeyeDataCollector:
             The Birdeye API response is expected to contain a list of holders under the 'data.items' field,
             where each holder has 'owner' (wallet address) and 'ui_amount' (token balance) fields.
         """
-        endpoint = "defi/v3/token/holder"  # Update this line to use the full path
+        endpoint = "defi/token/holder"  # Updated to use correct endpoint path
         params = {
             "address": token_address,
             "limit": limit,
