@@ -5,6 +5,7 @@ import asyncio
 from analyze_holders import HolderAnalyzer
 from audit import TokenAuditor
 from sheets_integration import GoogleSheetsIntegration
+from birdeye_get_data import BirdeyeDataCollector
 
 app = Flask(__name__)
 load_dotenv()
@@ -39,18 +40,23 @@ def analyze_token():
         try:
             # Initialize services
             sheets = GoogleSheetsIntegration(None, spreadsheet_id)
-            analyzer = HolderAnalyzer(birdeye_api_key, sheets)
-            auditor = TokenAuditor(birdeye_api_key, sheets)
+            birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
+            analyzer = HolderAnalyzer(birdeye, sheets)
+            auditor = TokenAuditor(birdeye, sheets)
         except Exception as e:
             print(f"Error initializing services: {str(e)}")
             return jsonify({'error': f'Service initialization failed: {str(e)}'}), 500
         
         # Run analysis asynchronously
         async def run_analysis():
-            await asyncio.gather(
-                analyzer.analyze_holder_data(token_address, ""),
-                auditor.audit_token(token_address)
-            )
+            try:
+                await asyncio.gather(
+                    analyzer.analyze_holder_data(token_address, ""),
+                    auditor.audit_token(token_address)
+                )
+            except Exception as e:
+                print(f"Error in analysis: {str(e)}")
+                raise
         
         # Run the async function
         asyncio.run(run_analysis())
