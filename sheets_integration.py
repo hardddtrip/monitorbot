@@ -443,9 +443,33 @@ class GoogleSheetsIntegration:
         """Post holder token analysis to Google Sheets."""
         sheet_name = "HolderAnalysis"
         
+        if not holder_data:
+            logger.error("Received empty holder_data")
+            return False
+
         try:
-            self.ensure_sheet_exists(sheet_name)
+            logger.info(f"Starting to post holder analysis to sheet: {sheet_name}")
+            logger.debug(f"Input holder data structure: {type(holder_data)}")
+            logger.debug(f"Input holder data keys: {list(holder_data.keys())}")
+            
+            # Ensure sheet exists with retry
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                if self.ensure_sheet_exists(sheet_name):
+                    break
+                logger.warning(f"Failed to ensure sheet exists, attempt {retry_count + 1} of {max_retries}")
+                retry_count += 1
+                if retry_count == max_retries:
+                    logger.error(f"Failed to ensure sheet {sheet_name} exists after {max_retries} attempts")
+                    return False
+                
             formatted_row = self._format_holder_data(holder_data)
+            if not formatted_row or len(formatted_row) != 4:
+                logger.error(f"Invalid formatted row data: {formatted_row}")
+                return False
+            
+            logger.info(f"Formatted row data structure: {[type(item) for item in formatted_row]}")
             
             # Get the next empty row
             try:
@@ -456,21 +480,21 @@ class GoogleSheetsIntegration:
                 
                 values = result.get('values', [])
                 next_row = len(values) + 1
-                logger.info(f"Will insert at row {next_row}")
+                logger.info(f"Will insert at row {next_row} in spreadsheet {self.spreadsheet_id}")
                 
                 # Add headers if sheet is empty
                 if next_row == 1:
                     logger.info("Sheet is empty, adding headers")
                     headers = ['Timestamp', 'Wallet Address', 'Total USD Value', 'Token Analysis']
                     try:
-                        self.service.spreadsheets().values().update(
+                        header_result = self.service.spreadsheets().values().update(
                             spreadsheetId=self.spreadsheet_id,
                             range=f'{sheet_name}!A1:D1',
                             valueInputOption='RAW',
                             body={'values': [headers]}
                         ).execute()
+                        logger.info(f"Successfully added headers: {header_result}")
                         next_row = 2
-                        logger.info("Successfully added headers")
                     except Exception as header_error:
                         logger.error(f"Error adding headers: {str(header_error)}")
                         return False
@@ -484,22 +508,26 @@ class GoogleSheetsIntegration:
                     ]
                 }
                 
-                logger.info(f"Posting data to range {range_name}")
+                logger.info(f"Attempting to post data to range {range_name}")
                 try:
-                    self.service.spreadsheets().values().update(
+                    update_result = self.service.spreadsheets().values().update(
                         spreadsheetId=self.spreadsheet_id,
                         range=range_name,
                         valueInputOption='RAW',
                         body=body
                     ).execute()
-                    logger.info("Successfully posted data")
+                    
+                    if 'updatedRows' not in update_result:
+                        logger.error(f"Update did not modify any rows. Result: {update_result}")
+                        return False
+                        
+                    logger.info(f"Successfully posted data. Updated {update_result.get('updatedRows')} rows")
                     
                     # Apply formatting
                     sheet_id = self._get_sheet_id(sheet_name)
                     if sheet_id:
-                        logger.info("Applying sheet formatting")
+                        logger.info(f"Applying formatting to sheet ID: {sheet_id}")
                         requests = [
-                            # Auto-resize columns
                             {
                                 'autoResizeDimensions': {
                                     'dimensions': {
@@ -510,7 +538,6 @@ class GoogleSheetsIntegration:
                                     }
                                 }
                             },
-                            # Enable text wrapping for the token analysis column
                             {
                                 'repeatCell': {
                                     'range': {
@@ -529,11 +556,11 @@ class GoogleSheetsIntegration:
                         ]
                         
                         try:
-                            self.service.spreadsheets().batchUpdate(
+                            format_result = self.service.spreadsheets().batchUpdate(
                                 spreadsheetId=self.spreadsheet_id,
                                 body={'requests': requests}
                             ).execute()
-                            logger.info("Successfully applied formatting")
+                            logger.info(f"Successfully applied formatting. Result: {format_result}")
                             return True
                         except Exception as format_error:
                             logger.error(f"Error applying formatting: {str(format_error)}")
@@ -546,14 +573,10 @@ class GoogleSheetsIntegration:
                 except Exception as update_error:
                     logger.error(f"Error posting data: {str(update_error)}")
                     return False
-                        
+                    
             except Exception as get_error:
                 logger.error(f"Error getting sheet data: {str(get_error)}")
                 return False
-                    
-        except Exception as sheet_error:
-            logger.error(f"Error with sheet operations: {str(sheet_error)}")
-            return False
                 
         except Exception as e:
             logger.error(f"Error in post_holder_token_analysis: {str(e)}")
