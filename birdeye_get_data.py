@@ -82,9 +82,8 @@ class BirdeyeDataCollector:
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so/defi"
         self.headers = {
-            "X-API-KEY": str(api_key),  # Ensure API key is a string
-            "accept": "application/json",
-            "x-chain": "solana"
+            "x-api-key": str(api_key),  # Ensure API key is a string
+            "accept": "application/json"
         }
 
     async def _make_request(self, endpoint: str, params: Dict = None) -> Dict:
