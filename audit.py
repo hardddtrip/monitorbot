@@ -14,7 +14,7 @@ class TokenAuditor:
     def __init__(self, birdeye: BirdeyeDataCollector, sheets: GoogleSheetsIntegration = None):
         self.birdeye = birdeye
         self.sheets = sheets
-        self.audit_sheet_name = "Audit"
+        self.audit_sheet_name = "TokenAudits"  # Update to match sheets_integration.py
 
     async def get_claude_insight(self, prompt: str) -> Dict:
         """Get market insight from Claude API"""
@@ -363,8 +363,22 @@ async def main():
         birdeye = BirdeyeDataCollector(api_key=os.getenv('BIRDEYE_API_KEY'))
         
         # Initialize Google Sheets integration
-        sheets = GoogleSheetsIntegration()
-        sheets.authenticate()
+        spreadsheet_id = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID')  # Use the correct env var name
+        if not spreadsheet_id:
+            raise ValueError("GOOGLE_SHEETS_SPREADSHEET_ID environment variable not set")
+            
+        # Try to get credentials from environment first
+        sheets = None
+        try:
+            sheets = GoogleSheetsIntegration(
+                credentials_file="service-account.json",  # Use the correct credentials file
+                spreadsheet_id=spreadsheet_id
+            )
+            sheets.authenticate()
+            logger.info("Successfully initialized Google Sheets integration")
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Sheets: {e}")
+            logger.warning("Continuing without Google Sheets integration")
         
         # Initialize auditor with sheets integration
         auditor = TokenAuditor(birdeye=birdeye, sheets=sheets)
@@ -374,10 +388,13 @@ async def main():
         audit_results = await auditor.audit_token(token_address)
         logger.info(f"Audit results: {json.dumps(audit_results, indent=2)}")
         
-        # Post to sheets
-        logger.info("Posting to Google Sheets...")
-        await auditor.post_audit_to_sheets(audit_results)
-        logger.info("Done!")
+        # Post to sheets if available
+        if sheets:
+            logger.info("Posting to Google Sheets...")
+            await auditor.post_audit_to_sheets(audit_results)
+            logger.info("Done!")
+        else:
+            logger.warning("Skipping Google Sheets posting - no integration available")
         
     except Exception as e:
         logger.error(f"Error in main: {str(e)}")
