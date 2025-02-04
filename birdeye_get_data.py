@@ -9,7 +9,7 @@ The BirdeyeDataCollector class contains the following key functions:
    - Sets up base URL and headers for API requests
 
 2. _make_request(endpoint: str, params: Dict = None)
-   - Internal helper function to make API requests with retry logic
+   - Internal helper function to make API requests with retry logic and exponential backoff
    - Handles server errors and JSON parsing
    - Implements exponential backoff for retries
 
@@ -79,13 +79,21 @@ class BirdeyeDataCollector:
     
     def __init__(self, api_key: str = None, sheets: GoogleSheetsIntegration = None):
         """Initialize the data collector with API key and Google Sheets integration."""
+        # Get API key from parameter or environment variable
         self.api_key = api_key or os.getenv("BIRDEYE_API_KEY")
+        
+        # Validate API key
         if not self.api_key:
             logger.error("No API key provided and BIRDEYE_API_KEY not set in environment")
             raise ValueError("API key is required. Set BIRDEYE_API_KEY environment variable or pass api_key parameter.")
-        
-        # Ensure API key is a string
-        self.api_key = str(self.api_key)
+            
+        # Ensure API key is a string and not empty
+        self.api_key = str(self.api_key).strip()
+        if not self.api_key:
+            logger.error("API key is empty after stripping whitespace")
+            raise ValueError("API key cannot be empty")
+            
+        logger.info(f"Initialized BirdeyeDataCollector with API key length: {len(self.api_key)}")
         
         self.sheets = sheets
         self.base_url = "https://public-api.birdeye.so"
@@ -95,72 +103,93 @@ class BirdeyeDataCollector:
             "x-chain": "solana"
         }
         
-        # Validate headers are properly set
+        # Validate headers
         if not isinstance(self.headers["X-API-KEY"], str):
             logger.error(f"API key is not a string: {type(self.headers['X-API-KEY'])}")
             raise ValueError("API key must be a string")
+            
+        if not self.headers["X-API-KEY"]:
+            logger.error("API key in headers is empty")
+            raise ValueError("API key in headers cannot be empty")
 
     async def _make_request(self, endpoint: str, params: Dict = None) -> Dict:
-        """Make a request to the Birdeye API with retry logic."""
+        """Make a request to the Birdeye API with retry logic and exponential backoff."""
         url = f"{self.base_url}/{endpoint}"
+        max_retries = 3
+        base_delay = 1  # Start with 1 second delay
+        timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
         
-        for attempt in range(3):
+        for attempt in range(max_retries):
             try:
-                async with aiohttp.ClientSession() as session:
-                    logger.info(f"Making request to {url} with headers: {self.headers} and params: {params} (attempt {attempt + 1}/3)")
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    # Log request details without exposing full API key
+                    masked_headers = self.headers.copy()
+                    if "X-API-KEY" in masked_headers:
+                        key = masked_headers["X-API-KEY"]
+                        masked_headers["X-API-KEY"] = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+                    logger.info(f"Making request to {url} with headers: {masked_headers} and params: {params} (attempt {attempt + 1}/{max_retries})")
+                    
                     async with session.get(url, headers=self.headers, params=params) as response:
-                        if response.status == 521:
-                            logger.warning(f"Birdeye API server is down (attempt {attempt + 1}/3)")
-                            if attempt < 2:
-                                await asyncio.sleep(5)
-                                continue
-                            return {}
-                            
-                        if response.status == 401:
-                            logger.error(f"Unauthorized access. Please check your API key. Headers: {self.headers}")
-                            if attempt < 2:
-                                await asyncio.sleep(5)
-                                continue
-                            return {}
-                            
                         response_text = await response.text()
-                        content_type = response.headers.get('content-type', '')
                         
-                        # Check if response is HTML instead of JSON
+                        # Handle specific error cases
+                        if response.status == 521:
+                            logger.warning(f"Birdeye API server is down (attempt {attempt + 1}/{max_retries})")
+                        elif response.status == 401:
+                            logger.error(f"Unauthorized access. API key validation failed. Please check your API key is valid and active.")
+                            return {"error": "unauthorized", "message": "Invalid or inactive API key"}
+                        elif response.status == 429:
+                            logger.warning(f"Rate limit exceeded (attempt {attempt + 1}/{max_retries})")
+                        elif response.status != 200:
+                            logger.error(f"Birdeye API error: Status {response.status} - {response_text}")
+                        
+                        # Check content type
+                        content_type = response.headers.get('content-type', '')
                         if 'text/html' in content_type:
                             logger.error(f"Received HTML response instead of JSON. Endpoint may be incorrect: {endpoint}")
-                            if attempt < 2:
-                                await asyncio.sleep(5)
-                                continue
-                            return {}
-                            
-                        if response.status != 200:
-                            logger.error(f"Birdeye API error: {response.status} - {response_text}")
-                            if attempt < 2:
-                                await asyncio.sleep(5)
-                                continue
-                            return {}
+                            if attempt == max_retries - 1:
+                                return {"error": "invalid_response", "message": "Received HTML instead of JSON"}
                         
-                        try:
-                            logger.info(f"Raw response from {endpoint}: {response_text}")
-                            data = json.loads(response_text)
-                            logger.info(f"Parsed response from {endpoint}: {json.dumps(data, indent=2)}")
-                            return data
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse JSON response: {str(e)}")
-                            if attempt < 2:
-                                await asyncio.sleep(5)
-                                continue
-                            return {}
-
+                        # Only process 200 responses
+                        if response.status == 200:
+                            try:
+                                data = json.loads(response_text)
+                                # Validate response structure
+                                if not isinstance(data, dict):
+                                    logger.error(f"Invalid response format. Expected dict, got {type(data)}")
+                                    return {"error": "invalid_format", "message": "Response is not a valid JSON object"}
+                                
+                                # Log success without full response content
+                                logger.info(f"Successfully received response from {endpoint}")
+                                return data
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Failed to parse JSON response: {str(e)}")
+                                if attempt == max_retries - 1:
+                                    return {"error": "json_parse", "message": f"Failed to parse response: {str(e)}"}
+                
+                # If we get here, we had an error and should retry
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.info(f"Retrying in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                    continue
+                
+            except asyncio.TimeoutError:
+                logger.error(f"Request timed out after {timeout.total} seconds")
+                if attempt == max_retries - 1:
+                    return {"error": "timeout", "message": f"Request timed out after {timeout.total} seconds"}
             except Exception as e:
                 logger.error(f"Request error: {str(e)}")
-                if attempt < 2:
-                    await asyncio.sleep(5)
-                    continue
-                return {}
+                if attempt == max_retries - 1:
+                    return {"error": "request_failed", "message": str(e)}
+            
+            # If we get here and it's not the last attempt, apply backoff
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                logger.info(f"Retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
 
-        return {}
+        return {"error": "max_retries", "message": f"Failed after {max_retries} attempts"}
 
     async def get_current_price_and_volume(self, token_address: str) -> Dict:
         """Get current price and volume data for a token"""
