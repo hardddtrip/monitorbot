@@ -20,14 +20,13 @@ def analyze_token():
             
         # Initialize components
         birdeye_api_key = os.getenv("BIRDEYE_API_KEY")
-        credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
         spreadsheet_id = os.getenv("SPREADSHEET_ID")
         
-        if not all([birdeye_api_key, credentials_json, spreadsheet_id]):
+        if not all([birdeye_api_key, os.getenv("GOOGLE_CREDENTIALS_JSON"), spreadsheet_id]):
             return jsonify({'error': 'Missing required environment variables'}), 500
         
         # Initialize services
-        sheets = GoogleSheetsIntegration(credentials_json, spreadsheet_id)
+        sheets = GoogleSheetsIntegration(None, spreadsheet_id)
         analyzer = HolderAnalyzer(birdeye_api_key, sheets)
         auditor = TokenAuditor(birdeye_api_key, sheets)
         
