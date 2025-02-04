@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import os
 from dotenv import load_dotenv
 import asyncio
+import threading
 from analyze_holders import HolderAnalyzer
 from audit import TokenAuditor
 from sheets_integration import GoogleSheetsIntegration
@@ -9,6 +10,32 @@ from birdeye_get_data import BirdeyeDataCollector
 
 app = Flask(__name__)
 load_dotenv()
+
+def run_analysis_background(token_address: str, birdeye_api_key: str, spreadsheet_id: str):
+    """Run the analysis in a background thread"""
+    async def analyze():
+        try:
+            # Initialize services
+            sheets = GoogleSheetsIntegration(None, spreadsheet_id)
+            birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
+            analyzer = HolderAnalyzer(birdeye, sheets)
+            auditor = TokenAuditor(birdeye, sheets)
+
+            # Run analysis
+            await asyncio.gather(
+                analyzer.analyze_holder_data(token_address, ""),
+                auditor.audit_token(token_address)
+            )
+        except Exception as e:
+            print(f"Error in background analysis: {str(e)}")
+
+    # Create a new event loop for the background thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(analyze())
+    finally:
+        loop.close()
 
 @app.route('/analyze', methods=['POST'])
 def analyze_token():
@@ -36,32 +63,18 @@ def analyze_token():
             if not google_creds: missing_vars.append("GOOGLE_CREDENTIALS_JSON")
             if not spreadsheet_id: missing_vars.append("SPREADSHEET_ID")
             return jsonify({'error': f'Missing required environment variables: {", ".join(missing_vars)}'}), 500
+
+        # Start analysis in background thread
+        thread = threading.Thread(
+            target=run_analysis_background,
+            args=(token_address, birdeye_api_key, spreadsheet_id)
+        )
+        thread.start()
         
-        try:
-            # Initialize services
-            sheets = GoogleSheetsIntegration(None, spreadsheet_id)
-            birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
-            analyzer = HolderAnalyzer(birdeye, sheets)
-            auditor = TokenAuditor(birdeye, sheets)
-        except Exception as e:
-            print(f"Error initializing services: {str(e)}")
-            return jsonify({'error': f'Service initialization failed: {str(e)}'}), 500
-        
-        # Run analysis asynchronously
-        async def run_analysis():
-            try:
-                await asyncio.gather(
-                    analyzer.analyze_holder_data(token_address, ""),
-                    auditor.audit_token(token_address)
-                )
-            except Exception as e:
-                print(f"Error in analysis: {str(e)}")
-                raise
-        
-        # Run the async function
-        asyncio.run(run_analysis())
-        
-        return jsonify({'success': True, 'message': 'Analysis completed'}), 200
+        return jsonify({
+            'success': True,
+            'message': 'Analysis started. Results will be posted to Google Sheets shortly.'
+        }), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
