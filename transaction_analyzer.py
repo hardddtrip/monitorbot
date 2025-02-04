@@ -6,6 +6,7 @@ import requests
 import asyncio
 import json
 from collections import defaultdict
+import aiohttp
 
 class TransactionAnalyzer:
     # Static cache for all instances
@@ -20,6 +21,20 @@ class TransactionAnalyzer:
         
         # Create cache directory if it doesn't exist
         os.makedirs(self.CACHE_DIR, exist_ok=True)
+        
+        self.session = None
+        
+    async def __aenter__(self):
+        """Initialize aiohttp session."""
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Close aiohttp session."""
+        if self.session:
+            await self.session.close()
+            self.session = None
     
     def _get_cache_path(self, token_address):
         """Get cache file path for a token address."""
@@ -70,7 +85,8 @@ class TransactionAnalyzer:
     
     async def fetch_transactions(self, token_address, minutes=5):
         """Fetch transactions from Helius API with caching and optimizations."""
-        cutoff_time = time.time() - (minutes * 60)
+        current_time = int(time.time())
+        cutoff_time = current_time - (minutes * 60)
         
         # Check cache first
         cached_txs = self._get_cached_transactions(token_address, cutoff_time)
@@ -81,10 +97,12 @@ class TransactionAnalyzer:
         base_url = f"https://api.helius.xyz/v0/addresses/{token_address}/transactions"
         all_transactions = []
         before_tx = None
-        max_iterations = 10  # Limit maximum API calls
+        max_iterations = 20  # Increased from 10 to ensure we get enough history
         iteration = 0
+        found_cutoff = False
+        oldest_tx_time = current_time
         
-        while iteration < max_iterations:
+        while iteration < max_iterations and not found_cutoff:
             # Use optimized query parameters
             url = f"{base_url}?api-key={self.api_key}&commitment=finalized&maxVersion=0&limit=100"
             if before_tx:
@@ -102,31 +120,36 @@ class TransactionAnalyzer:
             if not transactions:
                 break
             
-            # Check the last transaction's time
-            last_tx_time = self._get_tx_time(transactions[-1])
-            if last_tx_time < cutoff_time:
-                # Add only transactions within our time window
-                valid_txs = [tx for tx in transactions 
-                           if self._get_tx_time(tx) >= cutoff_time]
-                all_transactions.extend(valid_txs)
+            # Process each transaction
+            for tx in transactions:
+                tx_time = self._get_tx_time(tx)
+                oldest_tx_time = min(oldest_tx_time, tx_time)
+                if tx_time >= cutoff_time:
+                    all_transactions.append(tx)
+                else:
+                    found_cutoff = True
+                    break
+            
+            if found_cutoff:
                 break
             
-            all_transactions.extend(transactions)
-            
-            # Stop if we have enough transactions
-            # Up to 100 tx/min for high-volume tokens
-            if len(all_transactions) >= minutes * 100:
+            # Check if we've gone far enough back in time
+            if oldest_tx_time < cutoff_time:
                 break
             
             before_tx = transactions[-1].get('signature')
             iteration += 1
             
-            await asyncio.sleep(0.2)  # Increased rate limiting
+            await asyncio.sleep(0.2)  # Rate limiting
+        
+        # Sort transactions by timestamp to ensure chronological order
+        all_transactions.sort(key=lambda x: self._get_tx_time(x))
         
         # Cache the results
         if all_transactions:
             self._cache_transactions(token_address, all_transactions)
-            print(f"Fetched {len(all_transactions)} transactions")
+            time_range = f"from {datetime.fromtimestamp(oldest_tx_time)} to {datetime.fromtimestamp(current_time)}"
+            print(f"Fetched {len(all_transactions)} transactions {time_range}")
         
         return all_transactions
     
@@ -344,160 +367,107 @@ class TransactionAnalyzer:
         return "retail"
 
     async def analyze_transactions(self, token_address, minutes=5):
-        """Main method to analyze transactions."""
+        """Analyze transactions for a token over the specified time window."""
         try:
-            # Initialize metrics
-            trader_categories = {
-                'large_market_maker': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
-                'market_making_bot': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
-                'sniper_bot': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
-                'whale': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []},
-                'retail': {'buys': 0, 'sells': 0, 'volume': 0, 'count': 0, 'transactions': []}
-            }
-            
-            # Track wallet history and price points
-            wallet_history = defaultdict(list)
-            price_points = []
-            volume_distribution = {
-                'very_small': {'count': 0, 'amount': 0},  # < 0.1 SOL
-                'small': {'count': 0, 'amount': 0},       # 0.1 - 1 SOL
-                'medium': {'count': 0, 'amount': 0},      # 1 - 10 SOL
-                'large': {'count': 0, 'amount': 0},       # 10 - 100 SOL
-                'very_large': {'count': 0, 'amount': 0}   # > 100 SOL
-            }
-            
-            # Fetch and process transactions
             transactions = await self.fetch_transactions(token_address, minutes)
-            
             if not transactions:
+                print("No transactions found")
                 return None
+                
+            # Get token info from DexScreener
+            token_info = self._get_token_price(token_address)
+            if not token_info:
+                print("Failed to fetch token info")
+                return None
+                
+            # Process transactions
+            active_wallets = set()
+            total_volume = 0
             
-            # First pass: collect wallet history
+            # Process each transaction
+            processed_txs = []
             for tx in transactions:
-                # Get the actual wallet address from the transaction
-                source = None
+                tx_time = self._get_tx_time(tx)
+                wallet = tx.get('feePayer', 'unknown')  # Use feePayer as the wallet address
+                volume = self._get_transaction_value(tx, token_address)[0]
                 
-                # Try to get the wallet from native transfers first
-                for transfer in tx.get('nativeTransfers', []):
-                    if transfer.get('fromUserAccount'):
-                        source = transfer['fromUserAccount']
-                        break
+                active_wallets.add(wallet)
+                total_volume += volume
                 
-                # If no native transfer, try token transfers
-                if not source:
-                    for transfer in tx.get('tokenTransfers', []):
-                        if transfer.get('fromUserAccount'):
-                            source = transfer['fromUserAccount']
-                            break
+                processed_txs.append({
+                    'timestamp': tx_time,
+                    'wallet': wallet,
+                    'volume': volume,
+                    'signature': tx.get('signature'),
+                    'type': tx.get('type'),
+                    'raw_transaction': tx
+                })
                 
-                # If still no source, try account data
-                if not source:
-                    for account in tx.get('accountData', []):
-                        if account.get('owner') and not account['owner'].startswith('Jupiter'):
-                            source = account['owner']
-                            break
-                
-                # Last resort: use source field
-                if not source:
-                    source = tx.get('source', 'unknown')
-                
-                amount, is_sol_value = self._get_transaction_value(tx, token_address)
-                
-                # Determine if buy or sell
-                is_buy = False
-                token_transfers = tx.get('tokenTransfers', [])
-                for transfer in token_transfers:
-                    if transfer.get('mint') == token_address:
-                        is_buy = float(transfer.get('tokenAmount', 0)) > 0
-                        break
-                
-                # Track transaction info
-                tx_info = {
-                    'timestamp': tx['timestamp'],
-                    'amount': amount,
-                    'is_buy': is_buy,
-                    'is_rapid': False,
-                    'is_flash_loan': False,
-                    'is_high_slippage': False,
-                    'wallet': source
-                }
-                
-                # Check for patterns
-                if source in wallet_history:
-                    last_tx = wallet_history[source][-1]
-                    if tx['timestamp'] - last_tx['timestamp'] < 60:
-                        tx_info['is_rapid'] = True
-                
-                if len(tx.get('tokenTransfers', [])) >= 2:
-                    token_in_out = {}
-                    for transfer in tx.get('tokenTransfers', []):
-                        mint = transfer.get('mint')
-                        amt = float(transfer.get('tokenAmount', 0))
-                        if mint in token_in_out and abs(token_in_out[mint] + amt) < 0.01:
-                            tx_info['is_flash_loan'] = True
-                            break
-                        token_in_out[mint] = token_in_out.get(mint, 0) - amt
-                
-                try:
-                    if tx.get('type') == 'SWAP' and len(tx.get('tokenTransfers', [])) >= 2:
-                        price = amount / float(token_transfers[0].get('tokenAmount', 1))
-                        if len(price_points) > 1:
-                            prev_price = price_points[-1][1]
-                            price_impact = abs(price - prev_price) / prev_price
-                            if price_impact > 0.05:  # 5% slippage
-                                tx_info['is_high_slippage'] = True
-                except Exception:
-                    pass
-                
-                wallet_history[source].append(tx_info)
-            
-            # Second pass: categorize traders and aggregate metrics
-            suspicious_wallets = {}
-            for wallet, history in wallet_history.items():
-                category = self._categorize_trader(history)
-                trader_categories[category]['count'] += 1
-                trader_categories[category]['transactions'].extend(history)
-                
-                for tx in history:
-                    trader_categories[category]['volume'] += tx['amount']
-                    if tx['is_buy']:
-                        trader_categories[category]['buys'] += tx['amount']
-                    else:
-                        trader_categories[category]['sells'] += tx['amount']
-                    
-                    # Track volume distribution
-                    amount = tx['amount']
-                    if amount < 0.1:
-                        volume_distribution['very_small']['count'] += 1
-                        volume_distribution['very_small']['amount'] += amount
-                    elif amount < 1:
-                        volume_distribution['small']['count'] += 1
-                        volume_distribution['small']['amount'] += amount
-                    elif amount < 10:
-                        volume_distribution['medium']['count'] += 1
-                        volume_distribution['medium']['amount'] += amount
-                    elif amount < 100:
-                        volume_distribution['large']['count'] += 1
-                        volume_distribution['large']['amount'] += amount
-                    else:
-                        volume_distribution['very_large']['count'] += 1
-                        volume_distribution['very_large']['amount'] += amount
-                
-                if len(history) >= 3:
-                    suspicious_wallets[wallet] = len(history)
-            
-            suspicious_wallets = dict(sorted(suspicious_wallets.items(), key=lambda x: x[1], reverse=True)[:10])
-            
-            return {
+            # Calculate metrics
+            metrics = {
+                'transactions': processed_txs,
                 'transaction_count': len(transactions),
-                'active_wallets': len(wallet_history),
-                'trading_velocity': len(transactions) / minutes,
-                'total_volume': sum(cat['volume'] for cat in trader_categories.values()),
-                'trader_categories': trader_categories,
-                'suspicious_wallets': suspicious_wallets,
-                'volume_distribution': volume_distribution
+                'active_wallets': len(active_wallets),
+                'trading_velocity': len(transactions) / (minutes * 60),  # transactions per second
+                'total_volume': total_volume,
+                'token_ticker': token_info,
+                'market_cap_usd': 0
             }
+            
+            return metrics
             
         except Exception as e:
             print(f"Error analyzing transactions: {str(e)}")
             return None
+
+    async def get_token_info(self):
+        """Get token ticker and market cap information from DexScreener API."""
+        token_address = os.getenv('TOKEN_ADDRESS')
+        if not token_address:
+            print("TOKEN_ADDRESS environment variable not set")
+            return {'ticker': 'UNKNOWN', 'market_cap_usd': 0.0}
+            
+        print(f"\nFetching token info from DexScreener for {token_address}")
+            
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+            
+        try:
+            # DexScreener API endpoint
+            url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+            print(f"DexScreener API URL: {url}")
+            
+            async with self.session.get(url) as response:
+                if response.status != 200:
+                    print(f"Error fetching token info: {response.status}")
+                    return {'ticker': 'UNKNOWN', 'market_cap_usd': 0.0}
+                    
+                data = await response.json()
+                print(f"DexScreener API Response: {json.dumps(data, indent=2)}")
+                
+                if not data.get('pairs') or len(data['pairs']) == 0:
+                    print("No token data found")
+                    return {'ticker': 'UNKNOWN', 'market_cap_usd': 0.0}
+                    
+                # Get the first pair (usually the most liquid one)
+                pair = data['pairs'][0]
+                
+                # Extract token info
+                base_token = pair['baseToken']
+                ticker = base_token.get('symbol', 'UNKNOWN')
+                
+                # Get market cap directly from the pair data
+                market_cap_usd = float(pair.get('marketCap', 0))
+                
+                print(f"\nToken Info from DexScreener:")
+                print(f"• Ticker: {ticker}")
+                print(f"• Market Cap: ${market_cap_usd:,.2f}")
+                
+                return {
+                    'ticker': ticker,
+                    'market_cap_usd': market_cap_usd
+                }
+                
+        except Exception as e:
+            print(f"Error fetching token info: {str(e)}")
+            return {'ticker': 'UNKNOWN', 'market_cap_usd': 0.0}

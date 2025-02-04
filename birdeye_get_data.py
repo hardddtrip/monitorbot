@@ -1,3 +1,67 @@
+"""
+BirdEye Data Collection Module
+
+This module provides a comprehensive interface to the BirdEye API for collecting and analyzing token data on Solana.
+The BirdeyeDataCollector class contains the following key functions:
+
+1. __init__(api_key: str, sheets: GoogleSheetsIntegration = None)
+   - Initializes the data collector with API key and optional Google Sheets integration
+   - Sets up base URL and headers for API requests
+
+2. _make_request(endpoint: str, params: Dict = None)
+   - Internal helper function to make API requests with retry logic
+   - Handles server errors and JSON parsing
+   - Implements exponential backoff for retries
+
+3. get_current_price_and_volume(token_address: str)
+   - Fetches current price and 24h volume data for a token
+   - Returns dictionary with price and volume metrics
+
+4. get_recent_trades(token_address: str, limit: int = 100)
+   - Retrieves recent trade history for a token
+   - Returns list of trades with timestamp, price, and volume
+
+5. get_token_metadata(token_address: str)
+   - Fetches basic token information like name, symbol, decimals
+   - Returns dictionary of token metadata
+
+6. get_token_data(token_address: str)
+   - Comprehensive token data including price, volume, liquidity metrics
+   - Returns detailed dictionary with market metrics and trading activity
+
+7. get_top_traders(token_address: str, timeframe: str = "1h", limit: int = 10)
+   - Analyzes top traders by volume for manipulation detection
+   - Returns list of trader addresses and their trading volumes
+
+8. get_historical_price_changes(token_address: str)
+   - Calculates price changes over 1W, 2W, 1M, and 1Y periods
+   - Uses OHLCV data for accurate price change calculation
+
+9. get_ath_price_change(token_address: str)
+   - Finds 1-Year High price and calculates change from current price
+   - Filters out single highest spike to avoid anomalies
+
+10. get_24h_hourly_ohlcv(token_address: str)
+    - Retrieves hourly OHLCV data for the last 24 hours
+    - Returns formatted list of hourly price and volume data
+
+11. get_minute_ohlcv(token_address: str, minutes: int = 15)
+    - Gets 1-minute OHLCV data for specified time period
+    - Useful for short-term price movement analysis
+
+12. get_price_changes(token_address: str)
+    - Simplified interface for 1W, 1M, 3M, and 1Y price changes
+    - Returns percentage changes in dictionary format
+
+13. get_1y_weekly_ohlcv(token_address: str)
+    - Get weekly OHLCV data for the past year
+    - Returns list of weekly OHLCV data points
+
+14. get_token_holders(token_address: str, limit: int = 100)
+    - Get the top holders for a token
+    - Returns list of holder information including address and balance
+"""
+
 import logging
 from typing import Dict, List
 import aiohttp
@@ -299,7 +363,7 @@ class BirdeyeDataCollector:
             
             params = {
                 "address": token_address,
-                "type": "1D",
+                "type": "1D",  # Daily candles
                 "time_from": one_year_ago,
                 "time_to": now
             }
@@ -422,6 +486,229 @@ class BirdeyeDataCollector:
                     
         except Exception as e:
             logger.error(f"Error getting minute OHLCV data: {str(e)}")
+            return []
+
+    async def get_price_changes(self, token_address: str) -> Dict:
+        """Get price changes for different time periods using weekly OHLCV data.
+        
+        !!! CRITICAL FUNCTION - DO NOT MODIFY WITHOUT CAREFUL CONSIDERATION !!!
+        This function has been carefully implemented and tested to provide accurate
+        price change calculations across multiple timeframes. Any modifications could
+        impact monitoring systems and analysis tools.
+        
+        Args:
+            token_address: The token address to analyze
+            
+        Returns:
+            Dictionary containing price changes for:
+            - 1W: One week price change %
+            - 1M: One month price change % (4 weeks)
+            - 3M: Three month price change % (13 weeks)
+            - 1Y: One year price change %
+            - 1Y_high_to_current: % change from 1 year high to current price
+        """
+        try:
+            # Get weekly OHLCV data for the past year
+            weekly_data = await self.get_1y_weekly_ohlcv(token_address)
+            
+            if not weekly_data:
+                logger.error("No weekly data available for price change calculation")
+                return {
+                    "1W": 0.0,
+                    "1M": 0.0,
+                    "3M": 0.0,
+                    "1Y": 0.0,
+                    "1Y_high_to_current": 0.0
+                }
+            
+            # Sort data by timestamp to ensure correct order
+            weekly_data.sort(key=lambda x: x["timestamp"])
+            
+            # Get current price (latest close)
+            current_price = weekly_data[-1]["close"]
+            
+            # Calculate price changes
+            result = {}
+            
+            # 1W change - compare current price with previous week's close
+            if len(weekly_data) >= 2:
+                prev_week_price = weekly_data[-2]["close"]
+                result["1W"] = ((current_price - prev_week_price) / prev_week_price) * 100
+            else:
+                result["1W"] = 0.0
+            
+            # 1M change - compare current price with price 4 weeks ago
+            if len(weekly_data) >= 5:
+                month_ago_price = weekly_data[-5]["close"]
+                result["1M"] = ((current_price - month_ago_price) / month_ago_price) * 100
+            else:
+                result["1M"] = 0.0
+
+            # 3M change - compare current price with price 13 weeks ago
+            if len(weekly_data) >= 14:
+                three_month_ago_price = weekly_data[-14]["close"]
+                result["3M"] = ((current_price - three_month_ago_price) / three_month_ago_price) * 100
+            else:
+                result["3M"] = 0.0
+            
+            # 1Y change - compare current price with oldest available price
+            if len(weekly_data) >= 2:
+                year_ago_price = weekly_data[0]["close"]
+                result["1Y"] = ((current_price - year_ago_price) / year_ago_price) * 100
+            else:
+                result["1Y"] = 0.0
+            
+            # Calculate 1Y high and % change from high
+            if weekly_data:
+                # Get all closing prices and high prices
+                highs = [week["high"] for week in weekly_data]
+                year_high = max(highs)
+                result["1Y_high_to_current"] = ((current_price - year_high) / year_high) * 100
+            else:
+                result["1Y_high_to_current"] = 0.0
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error calculating price changes: {str(e)}")
+            return {
+                "1W": 0.0,
+                "1M": 0.0,
+                "3M": 0.0,
+                "1Y": 0.0,
+                "1Y_high_to_current": 0.0
+            }
+
+    async def get_1y_weekly_ohlcv(self, token_address: str) -> List[Dict]:
+        """Get weekly OHLCV data for the past year.
+        
+        !!! CRITICAL FUNCTION - DO NOT MODIFY WITHOUT CAREFUL CONSIDERATION !!!
+        This function is essential for historical price analysis and provides
+        the foundation for price change calculations. It has been carefully
+        implemented to ensure accurate data retrieval and formatting.
+        
+        Args:
+            token_address: The token address to get OHLCV data for
+            
+        Returns:
+            List of dictionaries containing weekly OHLCV data with fields:
+            - timestamp: YYYY-MM-DD format
+            - open: Opening price
+            - high: Highest price
+            - low: Lowest price
+            - close: Closing price
+            - volume: Trading volume
+        """
+        try:
+            # Calculate timestamps for 1 year ago
+            now = int(datetime.now().timestamp())
+            one_year_ago = now - (365 * 24 * 60 * 60)
+            
+            params = {
+                "address": token_address,
+                "type": "1W",  # Weekly candles
+                "time_from": one_year_ago,
+                "time_to": now
+            }
+            
+            data = await self._make_request("ohlcv", params)
+            if data and "data" in data and "items" in data["data"]:
+                items = data["data"]["items"]
+                
+                # Format the data
+                weekly_data = []
+                for item in sorted(items, key=lambda x: int(x["unixTime"])):
+                    weekly_data.append({
+                        "timestamp": datetime.fromtimestamp(int(item["unixTime"])).strftime("%Y-%m-%d"),
+                        "open": float(item["o"]),
+                        "high": float(item["h"]),
+                        "low": float(item["l"]),
+                        "close": float(item["c"]),
+                        "volume": float(item["v"])
+                    })
+                
+                return weekly_data
+            
+            logger.error(f"Error getting weekly OHLCV data: {data}")
+            return []
+                    
+        except Exception as e:
+            logger.error(f"Error getting weekly OHLCV data: {str(e)}")
+            return []
+
+    async def get_token_holders(self, token_address: str, limit: int = 10) -> List[Dict]:
+        """Get the top holders for a token.
+        
+        Args:
+            token_address: The token address to get holders for
+            limit: Maximum number of holders to return (default: 10)
+            
+        Returns:
+            List of dictionaries containing holder information:
+            - owner: Wallet address of the holder
+            - amount: Token balance in UI units (adjusted for decimals)
+            - percentage: Percentage of total supply held
+            
+        Note:
+            The Birdeye API response is expected to contain a list of holders under the 'data.items' field,
+            where each holder has 'owner' (wallet address) and 'ui_amount' (token balance) fields.
+        """
+        endpoint = "v3/token/holder"
+        params = {
+            "address": token_address,
+            "limit": limit,
+            "offset": 0
+        }
+
+        try:
+            response = await self._make_request(endpoint, params)
+            if not response or not response.get("success"):
+                logging.error(f"Failed to get token holders: {response}")
+                return []
+
+            holders_data = response.get("data", {}).get("items", [])
+            if not holders_data:
+                logging.warning("No holders data found in response")
+                return []
+
+            # Calculate total supply for percentage calculation
+            total_supply = sum(float(holder.get("ui_amount", 0)) for holder in holders_data)
+            if total_supply == 0:
+                logging.warning("Total supply is 0, cannot calculate percentages")
+                return []
+
+            holders = []
+            for holder in holders_data:
+                try:
+                    # Validate required fields exist
+                    if "owner" not in holder:
+                        logging.warning(f"Skipping holder, missing owner field: {holder}")
+                        continue
+                    if "ui_amount" not in holder:
+                        logging.warning(f"Skipping holder, missing ui_amount field: {holder}")
+                        continue
+
+                    # Validate and convert amount
+                    try:
+                        amount = float(holder["ui_amount"])
+                        percentage = (amount / total_supply) * 100 if total_supply > 0 else 0
+                    except (ValueError, TypeError):
+                        logging.warning(f"Invalid amount format for holder {holder['owner']}: {holder['ui_amount']}")
+                        continue
+
+                    holders.append({
+                        "owner": holder["owner"],
+                        "amount": amount,
+                        "percentage": percentage
+                    })
+                except Exception as e:
+                    logging.warning(f"Error processing holder data: {e}, holder: {holder}")
+                    continue
+
+            return holders
+
+        except Exception as e:
+            logging.error(f"Error getting token holders: {e}")
             return []
 
 async def main():

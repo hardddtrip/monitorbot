@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 from sheets_integration import GoogleSheetsIntegration
 from birdeye_get_data import BirdeyeDataCollector
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,30 +19,37 @@ class HolderAnalyzer:
         self.sheets = sheets
         self.birdeye = BirdeyeDataCollector(birdeye_api_key, sheets)
 
-    async def get_top_holders(self, token_address: str, limit: int = 10) -> List[Dict]:
-        """Get top holders for a token."""
-        url = 'https://public-api.birdeye.so/defi/v3/token/holder'
-        params = {
-            "address": token_address,
-            "offset": 0,
-            "limit": limit
-        }
-        headers = {
-            'X-API-KEY': self.birdeye_api_key,
-            'accept': 'application/json',
-            'x-chain': 'solana'
-        }
-
+    async def get_top_holders(self, token_address: str) -> List[Dict]:
+        """Get the top holders for a token."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, headers=headers) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        logger.info(f"Holder response: {data}")
-                        if data.get('success'):
-                            return data.get('data', {}).get('items', [])
-                    logger.error(f"Error getting holders: {response.status}")
-                    return []
+            # Get token info first
+            token_info = await self.birdeye.get_token_data(token_address)
+            if not token_info:
+                logger.error("Failed to get token info")
+                return []
+
+            # Get holders data
+            holders_data = await self.birdeye.get_token_holders(token_address)
+            if not holders_data:
+                logger.error("Failed to get holders data")
+                return []
+
+            # Process and return the holders data
+            processed_holders = []
+            for holder in holders_data:
+                try:
+                    processed_holder = {
+                        'owner': str(holder.get('owner', '')),
+                        'amount': float(holder.get('amount', 0)),
+                        'percentage': float(holder.get('percentage', 0))
+                    }
+                    processed_holders.append(processed_holder)
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error processing holder data: {e}")
+                    continue
+
+            return processed_holders
+
         except Exception as e:
             logger.error(f"Error in get_top_holders: {str(e)}")
             return []
@@ -178,58 +186,76 @@ class HolderAnalyzer:
             return None
 
     async def analyze_holder_data(self, token_address: str, token_name: str):
-        """Analyze holder data and post results to Google Sheets."""
-        holders = await self.get_top_holders(token_address)
-        if not holders:
-            logger.error("No holders found")
-            return
+        """Analyze top 10 holder data and post results to Google Sheets."""
+        try:
+            logger.info(f"Starting analysis of top 10 holders for token {token_name} ({token_address})")
+            holders = await self.get_top_holders(token_address)
+            if not holders:
+                logger.error("No holders found")
+                return
 
-        logger.info(f"Processing {len(holders)} holders for {token_name}")
-        for holder in holders:
-            try:
-                wallet = holder.get('owner')
-                if not wallet:
-                    continue
-
-                logger.info(f"Analyzing holder: {wallet}")
-                portfolio = await self.get_wallet_portfolio(wallet)
-                
-                if not portfolio or not isinstance(portfolio, dict):
-                    logger.error(f"Invalid portfolio data for wallet {wallet}")
-                    continue
-
-                # Create a serializable holder data dictionary
-                holder_data = {
-                    'wallet': str(wallet),
-                    'total_value': float(portfolio.get('total_value', 0)),
-                    'tokens': []
-                }
-
-                # Process token data
-                for token in portfolio.get('tokens', []):
-                    if not isinstance(token, dict):
+            logger.info(f"Processing {len(holders)} top holders for {token_name}")
+            success_count = 0
+            for idx, holder in enumerate(holders, 1):
+                try:
+                    wallet = holder.get('owner')
+                    if not wallet:
+                        logger.warning(f"Skipping holder #{idx} - missing wallet address")
                         continue
 
-                    token_data = {
-                        'symbol': str(token.get('symbol', 'Unknown')),
-                        'valueUsd': float(token.get('valueUsd', 0)),
-                        'price_changes': {
-                            'changes': {
-                                '1W': float(token.get('price_changes', {}).get('changes', {}).get('1W', 0)),
-                                '1M': float(token.get('price_changes', {}).get('changes', {}).get('1M', 0)),
-                                '3M': float(token.get('price_changes', {}).get('changes', {}).get('3M', 0)),
-                                '1Y': float(token.get('price_changes', {}).get('changes', {}).get('1Y', 0))
+                    logger.info(f"Analyzing holder #{idx}: {wallet}")
+                    portfolio = await self.get_wallet_portfolio(wallet)
+                    
+                    if not portfolio or not isinstance(portfolio, dict):
+                        logger.error(f"Invalid portfolio data for holder #{idx} wallet {wallet}")
+                        continue
+
+                    # Create a serializable holder data dictionary
+                    holder_data = {
+                        'wallet': str(wallet),
+                        'total_value': float(portfolio.get('total_value', 0)),
+                        'tokens': []
+                    }
+
+                    # Process token data
+                    for token in portfolio.get('tokens', []):
+                        if not isinstance(token, dict):
+                            logger.warning(f"Skipping invalid token data for holder #{idx} wallet {wallet}")
+                            continue
+
+                        token_data = {
+                            'symbol': str(token.get('symbol', 'Unknown')),
+                            'valueUsd': float(token.get('valueUsd', 0)),
+                            'price_changes': {
+                                'changes': {
+                                    '1W': float(token.get('price_changes', {}).get('changes', {}).get('1W', 0)),
+                                    '1M': float(token.get('price_changes', {}).get('changes', {}).get('1M', 0)),
+                                    '3M': float(token.get('price_changes', {}).get('changes', {}).get('3M', 0)),
+                                    '1Y': float(token.get('price_changes', {}).get('changes', {}).get('1Y', 0))
+                                }
                             }
                         }
-                    }
-                    holder_data['tokens'].append(token_data)
+                        holder_data['tokens'].append(token_data)
 
-                # Post the serializable data to Google Sheets
-                self.sheets.post_holder_token_analysis(holder_data)
-                
-            except Exception as e:
-                logger.error(f"Error processing holder {wallet}: {str(e)}")
-                continue
+                    logger.info(f"Posting analysis for holder #{idx} {wallet} to Google Sheets")
+                    logger.info(f"Holder data: {json.dumps(holder_data, indent=2)}")
+                    
+                    # Post the serializable data to Google Sheets
+                    if self.sheets.post_holder_token_analysis(holder_data):
+                        success_count += 1
+                        logger.info(f"Successfully posted analysis for holder #{idx} {wallet}")
+                    else:
+                        logger.error(f"Failed to post analysis for holder #{idx} {wallet}")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing holder #{idx} {wallet}: {str(e)}")
+                    continue
+
+            logger.info(f"Top holder analysis completed. Successfully processed {success_count} out of {len(holders)} holders")
+            
+        except Exception as e:
+            logger.error(f"Error in analyze_holder_data: {str(e)}")
+            raise
 
 async def main():
     # Load environment variables
